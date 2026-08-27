@@ -33,6 +33,17 @@ const isWinAdhoc = process.env.ORCA_WIN_ADHOC === '1'
 const isWinDevChannel = isWinHourly || isWinDaily || isWinAdhoc
 const isMacRelease = process.env.ORCA_MAC_RELEASE === '1' || isMacHourly || isMacDaily || isMacAdhoc
 const isLinuxArm64Release = process.env.ORCA_LINUX_ARM64_RELEASE === '1'
+// Why parsed from one slug instead of two variables: the same value is handed
+// to electron-vite as ORCA_RELEASE_REPO so the packaged updater's feed and the
+// generated app-update.yml point at the same repo. Unset — every upstream and
+// contributor build — resolves to stablyai/orca, so nothing changes by default.
+const releaseRepoSlug = process.env.ORCA_RELEASE_REPO ?? 'stablyai/orca'
+const releaseRepoMatch = /^([^/\s]+)\/([^/\s]+)$/.exec(releaseRepoSlug)
+if (!releaseRepoMatch) {
+  throw new Error(`ORCA_RELEASE_REPO must be "owner/repo", got: ${releaseRepoSlug}`)
+}
+const [, releaseRepoOwner, releaseRepoName] = releaseRepoMatch
+
 const localBuildVersion =
   isMacRelease || isWinDevChannel ? undefined : process.env.ORCA_LOCAL_BUILD_VERSION
 const isHourlyChannel = isMacHourly || isWinHourly
@@ -542,8 +553,8 @@ module.exports = {
   npmRebuild: true,
   publish: {
     provider: 'github',
-    owner: 'stablyai',
-    repo: devChannelRepo ?? 'orca',
+    owner: releaseRepoOwner,
+    repo: devChannelRepo ?? releaseRepoName,
     releaseType: devChannelRepo ? 'prerelease' : 'release'
   }
 }

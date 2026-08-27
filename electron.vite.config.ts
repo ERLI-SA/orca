@@ -52,6 +52,17 @@ const ORCA_POSTHOG_WRITE_KEY_LITERAL =
   typeof orcaPostHogWriteKey === 'string' && orcaPostHogWriteKey.length > 0
     ? JSON.stringify(orcaPostHogWriteKey)
     : 'null'
+// Why compile-time and not an env read at runtime: the updater feed must be
+// fixed to whichever repo actually published the binary. A fork that ships its
+// own AppImage sets ORCA_RELEASE_REPO=<owner>/<repo> for both `build:release`
+// and electron-builder, so app-update.yml and the hard-coded feed fallbacks in
+// `src/main/updater.ts` agree. Unset — every upstream and contributor build —
+// folds to the literal `stablyai/orca`, so behaviour is unchanged by default.
+const orcaReleaseRepo = process.env.ORCA_RELEASE_REPO
+const ORCA_RELEASE_REPO_LITERAL =
+  typeof orcaReleaseRepo === 'string' && /^[^/\s]+\/[^/\s]+$/.test(orcaReleaseRepo)
+    ? JSON.stringify(orcaReleaseRepo)
+    : JSON.stringify('stablyai/orca')
 const orcaDiagnosticsTokenUrl = process.env.ORCA_DIAGNOSTICS_TOKEN_URL
 const ORCA_DIAGNOSTICS_TOKEN_URL_LITERAL =
   typeof orcaDiagnosticsTokenUrl === 'string' && orcaDiagnosticsTokenUrl.length > 0
@@ -268,7 +279,8 @@ export const electronViteConfig: UserConfig = {
     define: {
       ORCA_BUILD_IDENTITY: ORCA_BUILD_IDENTITY_LITERAL,
       ORCA_POSTHOG_WRITE_KEY: ORCA_POSTHOG_WRITE_KEY_LITERAL,
-      ORCA_DIAGNOSTICS_TOKEN_URL: ORCA_DIAGNOSTICS_TOKEN_URL_LITERAL
+      ORCA_DIAGNOSTICS_TOKEN_URL: ORCA_DIAGNOSTICS_TOKEN_URL_LITERAL,
+      ORCA_RELEASE_REPO: ORCA_RELEASE_REPO_LITERAL
     },
     // Why: @xterm/headless declares "exports": null in package.json, which
     // prevents Vite's default resolver from finding the CJS entry. Point
