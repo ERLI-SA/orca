@@ -4,7 +4,13 @@
 # workflow drives a full three-platform cut with Apple notarization and
 # SignPath approval waits, and publishes into stablyai/orca. Neither the
 # signing credentials nor the target repo apply here, so this fork ships the
-# one artifact it actually needs — orca-linux.AppImage — on demand.
+# one artifact it actually needs — the amd64 .deb — on demand.
+#
+# Why a .deb rather than the AppImage upstream leads with: dpkg pulls the
+# runtime dependencies (python3-gi, at-spi2-core, xdotool, xclip, xvfb) that
+# computer-use and headless `serve` need, and the package's after-install hook
+# sets the setuid bit on chrome-sandbox. An AppImage has neither, so it runs
+# with --no-sandbox on hosts without unprivileged user namespaces.
 #
 # Why ORCA_RELEASE_REPO is set for both the app build and the packaging step:
 # the packaged updater resolves its feed from that constant (compiled into the
@@ -157,7 +163,7 @@ jobs:
           # Why: Vite's web build crosses Node's default old-space ceiling.
           NODE_OPTIONS: --max-old-space-size=4096
 
-      - name: Package AppImage
+      - name: Package deb
         uses: nick-fields/retry@v4
         with:
           timeout_minutes: 30
@@ -166,18 +172,20 @@ jobs:
           command: >-
             node config/scripts/ensure-native-runtime.mjs --runtime=electron &&
             pnpm exec electron-builder --config config/electron-builder.config.cjs
-            --linux AppImage --x64 --publish never
+            --linux deb --x64 --publish never
 
       # Why an explicit check rather than trusting `gh release upload` to fail:
       # latest-linux.yml is a side effect of having a publish provider
-      # configured, not of the AppImage target. If a config change ever drops
-      # it, the release would still publish and would silently stop feeding the
-      # in-app updater.
+      # configured, not of the deb target. If a config change ever drops it, the
+      # release would still publish and would silently stop feeding the in-app
+      # updater.
       - name: Verify release artifacts
+        id: artifacts
         run: |
           set -euo pipefail
+          deb="dist/orca-ide_${{ steps.version.outputs.version }}_amd64.deb"
           missing=0
-          for f in dist/orca-linux.AppImage dist/latest-linux.yml; do
+          for f in "$deb" dist/latest-linux.yml; do
             if [ ! -f "$f" ]; then
               echo "::error::Missing expected artifact: $f"
               missing=1
@@ -188,29 +196,61 @@ jobs:
             ls -la dist
             exit 1
           fi
-          grep -q "orca-linux.AppImage" dist/latest-linux.yml
-          ls -la dist/orca-linux.AppImage dist/latest-linux.yml
+          # Why grep the manifest: the updater resolves the download from it, so
+          # a manifest naming some other artifact feeds installs that 404.
+          grep -q "orca-ide_" dist/latest-linux.yml
+          echo "deb=$deb" >>"$GITHUB_OUTPUT"
+          ls -la "$deb" dist/latest-linux.yml
 
-      # Why unpack rather than launch: a GUI smoke test needs a display server
-      # and a working sandbox, which is a much larger surface than this job
-      # needs. Unpacking proves the squashfs is intact and that the payload the
-      # runtime would exec is actually inside it — the failure modes that would
-      # otherwise ship a download that dies on first click.
-      - name: Smoke-test the AppImage payload
+      # Why inspect rather than install: the runner is throwaway, so a failed
+      # `apt install` would prove little, while the control block and payload are
+      # exactly what a workstation's dpkg will act on. The dependency list is the
+      # whole reason this build ships a package instead of an AppImage — an empty
+      # Depends field would silently give up sandboxing and computer-use.
+      - name: Smoke-test the deb
         run: |
           set -euo pipefail
-          chmod +x dist/orca-linux.AppImage
-          work="$(mktemp -d)"
-          cp dist/orca-linux.AppImage "$work/"
-          (cd "$work" && ./orca-linux.AppImage --appimage-extract >/dev/null)
-          for f in AppRun orca-ide resources/app.asar; do
-            if [ ! -e "$work/squashfs-root/$f" ]; then
-              echo "::error::AppImage payload is missing $f"
-              find "$work/squashfs-root" -maxdepth 2 | head -50
+          deb="${{ steps.artifacts.outputs.deb }}"
+          echo "── control ──"
+          dpkg-deb -I "$deb"
+          echo "── required payload ──"
+          contents="$(dpkg-deb -c "$deb")"
+          for path in ./opt/Orca/orca-ide ./opt/Orca/chrome-sandbox ./opt/Orca/resources/app.asar; do
+            if ! grep -qF " $path" <<<"$contents"; then
+              echo "::error::deb payload is missing $path"
               exit 1
             fi
           done
-          echo "AppImage payload OK"
+          depends="$(dpkg-deb -f "$deb" Depends)"
+          echo "── depends ── $depends"
+          for dep in python3-gi at-spi2-core xdotool xclip xvfb; do
+            if ! grep -q "$dep" <<<"$depends"; then
+              echo "::error::deb does not depend on $dep"
+              exit 1
+            fi
+          done
+          # Why these two: they are what makes the package this fork's rather
+          # than upstream's, and both are generated — a config change could drop
+          # either without failing anything else, and the package would then
+          # update itself from stablyai.
+          workdir="$(mktemp -d)"
+          dpkg-deb -x "$deb" "$workdir"
+          echo "── updater target ──"
+          cat "$workdir/opt/Orca/resources/app-update.yml"
+          if ! grep -q "owner: ${{ github.repository_owner }}" "$workdir/opt/Orca/resources/app-update.yml"; then
+            echo "::error::app-update.yml does not target ${{ github.repository_owner }}"
+            exit 1
+          fi
+          if [ "$(cat "$workdir/opt/Orca/resources/package-type")" != "deb" ]; then
+            echo "::error::package-type marker is not 'deb'; the deb update recovery path stays disarmed"
+            exit 1
+          fi
+          if ! grep -aq "$ORCA_DISABLED_CAPABILITIES" "$workdir/opt/Orca/resources/app.asar"; then
+            echo "::error::the disabled-capability list is not compiled into the packaged asar"
+            exit 1
+          fi
+          rm -rf "$workdir"
+          echo "deb OK"
 
       - name: Publish GitHub release
         env:
@@ -220,8 +260,10 @@ jobs:
           TARGET: ${{ steps.version.outputs.sha }}
           PRERELEASE: ${{ inputs.prerelease }}
           REPO: ${{ github.repository }}
+          DEB: ${{ steps.artifacts.outputs.deb }}
         run: |
           set -euo pipefail
+          deb_name="$(basename "$DEB")"
           notes="$(
             cat <<EOF
           Unofficial Linux x64 build of Orca \`$VERSION\`, packaged by ERLI from $TARGET.
@@ -229,13 +271,17 @@ jobs:
           ## Install
 
           \`\`\`bash
-          curl -L -o orca-linux.AppImage \\
-            https://github.com/$REPO/releases/download/$TAG/orca-linux.AppImage
-          chmod +x orca-linux.AppImage
-          ./orca-linux.AppImage
+          curl -L -O https://github.com/$REPO/releases/download/$TAG/$deb_name
+          sudo apt install ./$deb_name
           \`\`\`
 
-          On a headless host add \`--appimage-extract-and-run --no-sandbox\`.
+          \`apt\` is what resolves the runtime dependencies; \`sudo dpkg -i\` alone
+          leaves them unmet. Installing puts the app in \`/opt/Orca\`, the
+          \`orca-ide\` CLI on PATH, and sets the setuid bit on Chromium's sandbox
+          helper, so no \`--no-sandbox\` is needed.
+
+          Upgrading over an earlier build keeps \`~/.config/orca\`. Removing the
+          package (\`sudo apt remove orca-ide\`) keeps it too.
 
           Not built or signed by stablyai. Notes for the upstream version are at
           https://github.com/stablyai/orca/releases.
@@ -247,11 +293,5 @@ jobs:
           else
             args+=(--latest)
           fi
-          assets=(dist/orca-linux.AppImage dist/latest-linux.yml)
-          # electron-builder emits a blockmap for delta downloads; it is not
-          # required for the updater to work, so ship it only when present.
-          if [ -f dist/orca-linux.AppImage.blockmap ]; then
-            assets+=(dist/orca-linux.AppImage.blockmap)
-          fi
-          gh release create "$TAG" "${args[@]}" "${assets[@]}"
+          gh release create "$TAG" "${args[@]}" "$DEB" dist/latest-linux.yml
           gh release view "$TAG" --json url --jq .url
