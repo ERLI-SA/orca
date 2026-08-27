@@ -19,6 +19,7 @@
 import { useState } from 'react'
 import { useAppStore } from '../store'
 import { FirstLaunchBanner } from './FirstLaunchBanner'
+import { isCapabilityDisabled } from '../../../shared/disabled-capabilities'
 
 export function TelemetryFirstLaunchSurface(): React.JSX.Element | null {
   const settings = useAppStore((s) => s.settings)
@@ -30,6 +31,11 @@ export function TelemetryFirstLaunchSurface(): React.JSX.Element | null {
   const fetchSettings = useAppStore((s) => s.fetchSettings)
   const [dismissedThisSession, setDismissedThisSession] = useState(false)
 
+  // Why: a build with telemetry compiled out has nothing to opt into, so the
+  // notice would ask the user to resolve a choice that cannot change anything.
+  if (isCapabilityDisabled('privacy')) {
+    return null
+  }
   if (!settings || dismissedThisSession) {
     return null
   }

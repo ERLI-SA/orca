@@ -16,6 +16,7 @@ import { registerLinearHandlers } from '../linear'
 import { registerJiraHandlers } from '../jira'
 import { registerBitbucketHandlers } from '../bitbucket'
 import { registerFeedbackHandlers } from '../feedback'
+import { isCapabilityEnabled } from '../../../shared/disabled-capabilities'
 import { registerCrashReportingHandlers } from '../crash-reporting'
 import { registerExportHandlers } from '../export'
 import { registerStatsHandlers } from '../stats'
@@ -155,8 +156,13 @@ export function registerCoreHandlers(
   registerLinearHandlers()
   registerJiraHandlers()
   registerBitbucketHandlers()
-  registerFeedbackHandlers()
-  if (crashReports) {
+  // Why the channel is left unregistered rather than made to refuse: it posts
+  // repository context to www.onorca.dev, and an unhandled channel rejects any
+  // caller that reaches past the hidden menu entry.
+  if (isCapabilityEnabled('feedback')) {
+    registerFeedbackHandlers()
+  }
+  if (crashReports && isCapabilityEnabled('crash-report')) {
     registerCrashReportingHandlers(crashReports)
   }
   registerExportHandlers()

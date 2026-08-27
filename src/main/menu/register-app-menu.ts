@@ -6,6 +6,7 @@ import {
   type KeybindingOverrides
 } from '../../shared/keybindings'
 import type { UpdateCheckOptions } from '../../shared/update-status-types'
+import { isCapabilityEnabled } from '../../shared/disabled-capabilities'
 import { translateMain } from '../i18n/main-i18n'
 import { createAppMenuSelectionItem } from './app-menu-selection-item'
 
@@ -318,8 +319,12 @@ function buildAndApplyMenu(options: RegisterAppMenuOptions): void {
   const helpMenu: Electron.MenuItemConstructorOptions = {
     label: translateMain('menu.help', 'Help'),
     submenu: [
-      crashReportItem,
-      { type: 'separator' },
+      // Why conditional rather than removed: the crash report uploads a
+      // diagnostic bundle to an endpoint this build does not target, so the
+      // entry would open a dialog that can only fail.
+      ...(isCapabilityEnabled('crash-report')
+        ? [crashReportItem, { type: 'separator' } as Electron.MenuItemConstructorOptions]
+        : []),
       featureTourItem,
       setupGuideItem,
       ...(isMac
