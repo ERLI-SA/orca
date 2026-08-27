@@ -16,6 +16,7 @@ import { SidebarTaskNavButton } from './SidebarTaskNavButton'
 import { HideSidebarMenu } from './sidebar-nav-controls'
 import { translate } from '@/i18n/i18n'
 import { lazyWithRetry } from '@/lib/lazy-with-retry'
+import { isCapabilityDisabled } from '../../../../shared/disabled-capabilities'
 
 export { getSetupGuideSidebarEntryReady, shouldShowSetupGuideEntry } from './SetupGuideSidebarEntry'
 
@@ -34,6 +35,12 @@ export function shouldShowAgentDashboardButton(
 export function shouldShowMobileButton(
   settings: Pick<GlobalSettings, 'showMobileButton'> | null | undefined
 ): boolean {
+  // Why checked before the setting: the sidebar entry is a second way into the
+  // pairing flow, independent of Settings, and its default is on — hiding the
+  // Settings section alone would leave it reachable.
+  if (isCapabilityDisabled('mobile')) {
+    return false
+  }
   return settings?.showMobileButton !== false
 }
 
@@ -46,6 +53,11 @@ export function shouldShowAutomationsButton(
 export function shouldShowArtifactsButton(
   settings: Pick<GlobalSettings, 'showArtifactsButton'> | null | undefined
 ): boolean {
+  // Why: ArtifactsPage is the cloud browser — it opens on an Orca sign-in
+  // prompt, so without the capability the entry leads only to a dead end.
+  if (isCapabilityDisabled('artifacts')) {
+    return false
+  }
   return settings?.showArtifactsButton === true
 }
 

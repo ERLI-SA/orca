@@ -6,8 +6,14 @@ import {
   retainedSkillSelection,
   type SkillSelectionPolicy
 } from './skill-selection'
+import { isCapabilityDisabled } from '../../../../shared/disabled-capabilities'
 
 export function isSkillShareEligible(skill: DiscoveredSkill, local: boolean): boolean {
+  // Why here: every share affordance — the row action, the detail dialog button
+  // — reads this one predicate, and the IPC behind them is not registered.
+  if (isCapabilityDisabled('share-skills')) {
+    return false
+  }
   return local && skill.installed && (skill.sourceKind === 'home' || skill.sourceKind === 'repo')
 }
 
