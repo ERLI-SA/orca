@@ -23,6 +23,7 @@ import {
   submittedReportIds
 } from './crash-reporting-sendable-reports'
 import { buildUncapturedCrashReportText, submitCrashReport } from './crash-reporting-submission'
+import { isCapabilityEnabled } from '../../shared/disabled-capabilities'
 
 export function _resetRendererErrorReportDedupeForTests(): void {
   recentRendererErrorReportKeys.clear()
@@ -43,14 +44,28 @@ export function _getCrashReportingStateSizesForTests(): {
 }
 
 export function registerCrashReportingHandlers(store: CrashReportStore): void {
+  // Why the channels stay registered when the capability is off: the renderer
+  // asks for the pending report as it mounts, and an unhandled channel rejects
+  // there. Only the surfaces that would offer an upload this build cannot make
+  // answer empty — recording and copying stay live, because both write nothing
+  // beyond local files. `createWebDiagnosticsApi` answers the same shape.
+  const reportsSurfaced = isCapabilityEnabled('crash-report')
+
   ipcMain.removeHandler('crashReports:getLatestPending')
-  ipcMain.handle('crashReports:getLatestPending', () => getLatestPendingReport(store))
+  ipcMain.handle('crashReports:getLatestPending', () =>
+    reportsSurfaced ? getLatestPendingReport(store) : null
+  )
 
   ipcMain.removeHandler('crashReports:getLatestReport')
-  ipcMain.handle('crashReports:getLatestReport', () => getLatestSendableReport(store))
+  ipcMain.handle('crashReports:getLatestReport', () =>
+    reportsSurfaced ? getLatestSendableReport(store) : null
+  )
 
   ipcMain.removeHandler('crashReports:dismiss')
   ipcMain.handle('crashReports:dismiss', async (_event, args: { reportId: string }) => {
+    if (!reportsSurfaced) {
+      return null
+    }
     if (inFlightSubmissions.has(args.reportId)) {
       return store.getById(args.reportId)
     }
@@ -104,7 +119,14 @@ export function registerCrashReportingHandlers(store: CrashReportStore): void {
   })
 
   ipcMain.removeHandler('crashReports:submit')
-  ipcMain.handle('crashReports:submit', async (_event, args: CrashReportSubmitArgs) =>
-    submitCrashReport(store, args)
-  )
+  ipcMain.handle('crashReports:submit', async (_event, args: CrashReportSubmitArgs) => {
+    if (!reportsSurfaced) {
+      return {
+        ok: false as const,
+        status: null,
+        error: 'Sending crash reports is disabled in this build.'
+      }
+    }
+    return submitCrashReport(store, args)
+  })
 }

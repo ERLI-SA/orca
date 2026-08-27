@@ -161,7 +161,7 @@ export function registerCoreHandlers(
   if (isCapabilityEnabled('feedback')) {
     registerFeedbackHandlers()
   }
-  if (crashReports && isCapabilityEnabled('crash-report')) {
+  if (crashReports) {
     registerCrashReportingHandlers(crashReports)
   }
   registerExportHandlers()

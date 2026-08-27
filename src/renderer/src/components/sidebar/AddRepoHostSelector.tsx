@@ -10,6 +10,7 @@ import type { ExecutionHostId } from '../../../../shared/execution-host'
 import { describeRuntimeCompatBlock } from '../../../../shared/protocol-compat'
 import { translate } from '@/i18n/i18n'
 import { canConnectAddRepoHost, canSelectAddRepoHost } from './add-repo-host-availability'
+import { isCapabilityEnabled } from '../../../../shared/disabled-capabilities'
 
 type AddRepoHostSelectorProps = {
   hosts: SidebarHostOption[]
@@ -40,7 +41,8 @@ export function AddRepoHostSelector({
   onAddRemoteServer
 }: AddRepoHostSelectorProps): React.JSX.Element | null {
   const [addHostOpen, setAddHostOpen] = useState(false)
-  const showHostSetupActions = Boolean(onAddSshHost || onAddRemoteServer)
+  const canAddRemoteServer = Boolean(onAddRemoteServer) && isCapabilityEnabled('servers')
+  const showHostSetupActions = Boolean(onAddSshHost) || canAddRemoteServer
   if (!shouldShowHostScopeControls(hosts) && !showHostSetupActions) {
     return null
   }
@@ -134,7 +136,7 @@ export function AddRepoHostSelector({
                         </span>
                       </button>
                     ) : null}
-                    {onAddRemoteServer ? (
+                    {canAddRemoteServer && onAddRemoteServer ? (
                       <button
                         type="button"
                         className="flex w-full flex-col rounded-sm px-2.5 py-2 text-left hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"

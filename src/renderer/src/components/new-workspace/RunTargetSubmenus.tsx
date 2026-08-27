@@ -11,6 +11,7 @@ import {
   type EphemeralVmRecipeOption
 } from './run-target-options'
 import { COMBOBOX_POPOVER_SURFACE } from './type-ahead-combobox-styles'
+import { isCapabilityEnabled } from '../../../../shared/disabled-capabilities'
 
 const SUBMENU_CONTENT = cn('w-72 p-1', COMBOBOX_POPOVER_SURFACE)
 
@@ -164,7 +165,7 @@ export function AddHostSubmenuRow({
               onCommit={onAddSshHost}
             />
           ) : null}
-          {onAddRemoteServer ? (
+          {onAddRemoteServer && isCapabilityEnabled('servers') ? (
             <RunTargetRow
               icon={<Cloud className="size-3.5 shrink-0 text-muted-foreground" />}
               label={translate(
