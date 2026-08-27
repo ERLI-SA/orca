@@ -1,4 +1,5 @@
 import { net } from 'electron'
+import { isCapabilityDisabled } from '../shared/disabled-capabilities'
 import { compareVersions, isValidVersion } from './updater-fallback'
 
 export type NudgeConfig = {
@@ -8,6 +9,11 @@ export type NudgeConfig = {
 }
 
 export async function fetchNudge(): Promise<NudgeConfig | null> {
+  // Why here and not at the call site: every caller already treats null as
+  // "no nudge", so the poll disappears without touching the update flow.
+  if (isCapabilityDisabled('whats-new')) {
+    return null
+  }
   try {
     const res = await net.fetch('https://onorca.dev/whats-new/nudge.json', {
       signal: AbortSignal.timeout(5000)

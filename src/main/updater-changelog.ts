@@ -1,5 +1,6 @@
 import { net } from 'electron'
 import type { ChangelogData } from '../shared/update-status-types'
+import { isCapabilityDisabled } from '../shared/disabled-capabilities'
 import { compareVersions } from './updater-fallback'
 
 type ChangelogEntry = {
@@ -42,6 +43,11 @@ export async function fetchChangelog(
   incomingVersion: string,
   localVersion: string
 ): Promise<ChangelogData | null> {
+  // Why: null is the documented "nothing to show" result, so skipping the fetch
+  // degrades to an update notification without the marketing highlight.
+  if (isCapabilityDisabled('whats-new')) {
+    return null
+  }
   const res = await net.fetch('https://onorca.dev/whats-new/changelog.json', {
     signal: AbortSignal.timeout(5000)
   })

@@ -41,6 +41,7 @@ import {
 import { OrcaLogoSettingsIcon } from '@/components/settings/orca-logo-settings-icon'
 import { LinearIcon } from '@/components/icons/LinearIcon'
 import type { Repo } from '../../../shared/repo-types'
+import { isSettingsSectionDisabled } from '../../../shared/disabled-capabilities'
 import { getRepoKindLabel } from '../../../shared/repo-kind'
 import { useAppStore } from '@/store'
 import { isMacUserAgent, isWindowsUserAgent } from '@/components/terminal-pane/pane-helpers'
@@ -161,7 +162,7 @@ export function buildSettingsNavigationMetadata({
     }
   }
 
-  return [
+  const sections: SettingsNavSection[] = [
     // Why: this array's order must mirror SETTINGS_NAV_GROUPS so the Settings
     // sidebar and the Cmd+J palette both read top-to-bottom in the same grouped
     // order — keep each new entry beside its group's siblings.
@@ -690,6 +691,10 @@ export function buildSettingsNavigationMetadata({
       }
     })
   ]
+  // Why filtered here rather than at each call site: this registry is the one
+  // place the sidebar and the Cmd+J palette both read, so a capability the
+  // build ships without cannot reappear in one of them.
+  return sections.filter((section) => !isSettingsSectionDisabled(section.id))
 }
 
 export function useSettingsNavigationMetadata(): SettingsNavSection[] {

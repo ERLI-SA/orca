@@ -10,7 +10,17 @@ export default defineConfig({
   base: './',
   plugins: [react(), tailwindcss()],
   define: {
-    ORCA_FEATURE_WALL_ENABLED: 'true'
+    ORCA_FEATURE_WALL_ENABLED: 'true',
+    // Why mirrored from electron.vite.config.ts: `orca serve` builds this bundle
+    // from the same renderer sources, and a capability disabled in the desktop
+    // app must not reappear in its web client.
+    ORCA_DISABLED_CAPABILITIES: JSON.stringify(
+      (process.env.ORCA_DISABLED_CAPABILITIES ?? '')
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter(Boolean)
+        .join(',')
+    )
   },
   resolve: {
     alias: {

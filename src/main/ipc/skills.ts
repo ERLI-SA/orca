@@ -21,6 +21,7 @@ import {
   resolveSkillDiscoveryTarget
 } from '../skills/skill-discovery-target'
 import { registerSkillCloudIpcHandlers } from './skill-cloud-ipc-handlers'
+import { isCapabilityEnabled } from '../../shared/disabled-capabilities'
 import { handleMainWindowSkillIpc } from './skill-ipc-main-window'
 
 export function registerSkillsHandlers(store: Store, runtime?: OrcaRuntimeService): void {
@@ -69,7 +70,10 @@ export function registerSkillsHandlers(store: Store, runtime?: OrcaRuntimeServic
     async (_event, target?: SkillDiscoveryTarget): Promise<SkillDiscoveryResult> => discover(target)
   )
 
-  if (runtime) {
+  // Why the whole handler set rather than the publish call alone: every channel
+  // here talks to app.orca.dev / share.onorca.dev, so a build without skill
+  // sharing has nothing for them to reach.
+  if (runtime && isCapabilityEnabled('share-skills')) {
     registerSkillCloudIpcHandlers(runtime, discover)
   }
 

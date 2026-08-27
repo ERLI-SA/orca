@@ -1,4 +1,5 @@
 import { app } from 'electron'
+import { isCapabilityDisabled } from '../../shared/disabled-capabilities'
 
 export type OrcaCloudAuthConfig = {
   apiBaseUrl: string
@@ -69,6 +70,16 @@ export function getOrcaCloudAuthConfig(
 ): { configured: true; config: OrcaCloudAuthConfig } | { configured: false; setupMessage: string } {
   // Why: loopback HTTP endpoints are a local-development convenience only;
   // packaged builds must not accept plain-HTTP token endpoints via env vars.
+  // Why gated on both: the relay this config unlocks exists to serve Orca
+  // Account and Orca Mobile. With neither capability shipped there is nothing
+  // for a connection to login.onorca.dev / relay.onorca.dev to carry, so report
+  // the build as unconfigured and the relay is never constructed.
+  if (isCapabilityDisabled('orca-account') && isCapabilityDisabled('mobile')) {
+    return {
+      configured: false,
+      setupMessage: 'Orca Cloud sign-in is not available in this build.'
+    }
+  }
   const allowLoopbackHttp = !packaged
   const cleanEndpointUrl = (value: string | undefined): string | null =>
     cleanUrl(value, allowLoopbackHttp)

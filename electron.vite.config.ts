@@ -6,6 +6,10 @@ import tailwindcss from '@tailwindcss/vite'
 import { createBootstrapFatalExitBanner } from './config/build-plugins/bootstrap-fatal-exit-banner'
 import { createPlainNodeEntryGuardPlugin } from './config/build-plugins/plain-node-entry-guard'
 import packageJson from './package.json' with { type: 'json' }
+import {
+  DISABLEABLE_CAPABILITIES,
+  isDisableableCapability
+} from './src/shared/disabled-capabilities'
 
 const BUNDLED_MAIN_DEPENDENCIES = new Set([
   '@xterm/headless',
@@ -58,6 +62,23 @@ const ORCA_POSTHOG_WRITE_KEY_LITERAL =
 // and electron-builder, so app-update.yml and the hard-coded feed fallbacks in
 // `src/main/updater.ts` agree. Unset — every upstream and contributor build —
 // folds to the literal `stablyai/orca`, so behaviour is unchanged by default.
+// Why validated here and not in the shared module: an unknown id is a typo in
+// the release workflow, and failing the build is the only place that catches it
+// before a capability someone meant to disable quietly ships enabled.
+const ORCA_DISABLED_CAPABILITIES_LITERAL = (() => {
+  const requested = (process.env.ORCA_DISABLED_CAPABILITIES ?? '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+  const unknown = requested.filter((entry) => !isDisableableCapability(entry))
+  if (unknown.length > 0) {
+    throw new Error(
+      `ORCA_DISABLED_CAPABILITIES lists unknown ids: ${unknown.join(', ')}. ` +
+        `Known ids: ${DISABLEABLE_CAPABILITIES.join(', ')}`
+    )
+  }
+  return JSON.stringify(requested.join(','))
+})()
 const orcaReleaseRepo = process.env.ORCA_RELEASE_REPO
 const ORCA_RELEASE_REPO_LITERAL =
   typeof orcaReleaseRepo === 'string' && /^[^/\s]+\/[^/\s]+$/.test(orcaReleaseRepo)
@@ -280,7 +301,8 @@ export const electronViteConfig: UserConfig = {
       ORCA_BUILD_IDENTITY: ORCA_BUILD_IDENTITY_LITERAL,
       ORCA_POSTHOG_WRITE_KEY: ORCA_POSTHOG_WRITE_KEY_LITERAL,
       ORCA_DIAGNOSTICS_TOKEN_URL: ORCA_DIAGNOSTICS_TOKEN_URL_LITERAL,
-      ORCA_RELEASE_REPO: ORCA_RELEASE_REPO_LITERAL
+      ORCA_RELEASE_REPO: ORCA_RELEASE_REPO_LITERAL,
+      ORCA_DISABLED_CAPABILITIES: ORCA_DISABLED_CAPABILITIES_LITERAL
     },
     // Why: @xterm/headless declares "exports": null in package.json, which
     // prevents Vite's default resolver from finding the CJS entry. Point
@@ -302,6 +324,11 @@ export const electronViteConfig: UserConfig = {
     }
   },
   renderer: {
+    // Why the renderer needs it too: the Settings sidebar and the Cmd+J palette
+    // decide what to list from the same constant the main process gates on.
+    define: {
+      ORCA_DISABLED_CAPABILITIES: ORCA_DISABLED_CAPABILITIES_LITERAL
+    },
     resolve: {
       alias: {
         '@renderer': resolve('src/renderer/src'),

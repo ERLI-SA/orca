@@ -1,6 +1,7 @@
 // Why: publishing an artifact mints a URL anyone can open, so agents get the capability only
 // after the user grants it. The gate lives here so main, the CLI, and Settings share one contract.
 import type { GlobalSettings } from './global-settings-types'
+import { isCapabilityDisabled } from './disabled-capabilities'
 
 export const ARTIFACT_SHARING_DISABLED_CODE = 'artifact_sharing_disabled'
 
@@ -29,6 +30,12 @@ export class ArtifactSharingDisabledError extends Error {
 export function isArtifactSharingEnabled(
   settings: Pick<GlobalSettings, 'artifactSharingEnabled'> | null | undefined
 ): boolean {
+  // Why checked before the setting: a profile carried over from a build that
+  // shipped artifacts would otherwise keep the flag set, and Settings no longer
+  // renders the toggle that would turn it back off.
+  if (isCapabilityDisabled('artifacts')) {
+    return false
+  }
   return settings?.artifactSharingEnabled === true
 }
 

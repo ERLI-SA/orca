@@ -49,6 +49,12 @@ jobs:
 
     env:
       ORCA_RELEASE_REPO: ${{ github.repository }}
+      # Every capability `src/shared/disabled-capabilities.ts` knows how to turn
+      # off. These all either reach stablyai-operated services or hand a
+      # corporate checkout to one, which a build shipped on company machines has
+      # no business doing. An id not listed there fails the build.
+      ORCA_DISABLED_CAPABILITIES: >-
+        artifacts,computer-use,crash-report,feedback,mobile,orca-account,plugins,privacy,servers,share-skills,star-prompt,whats-new
 
     steps:
       # Why the `||`: an empty `ref` input must fall through to checkout's own
@@ -62,11 +68,18 @@ jobs:
       # ORCA_RELEASE_REPO plumbing the packaged updater keeps upstream's
       # hard-coded feed, so the AppImage would offer — and install — stablyai
       # builds over this one. That is invisible until a user's first update.
-      - name: Verify the checked-out tree can retarget the updater
+      - name: Verify the checked-out tree honours this build's ERLI settings
         run: |
           set -euo pipefail
-          if ! grep -q 'ORCA_RELEASE_REPO' electron.vite.config.ts; then
-            echo "::error::This ref predates the ORCA_RELEASE_REPO plumbing. Build a branch that carries it, not a bare upstream tag."
+          missing=0
+          for constant in ORCA_RELEASE_REPO ORCA_DISABLED_CAPABILITIES; do
+            if ! grep -q "$constant" electron.vite.config.ts; then
+              echo "::error::This ref predates the $constant plumbing."
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "::error::Build a branch that carries the ERLI build constants, not a bare upstream tag."
             exit 1
           fi
 

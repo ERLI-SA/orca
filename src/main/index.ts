@@ -289,6 +289,7 @@ import {
   seedLiveClaudePtysFromPersistence
 } from './claude-accounts/live-pty-gate'
 import { StarNagService } from './star-nag/service'
+import { isCapabilityDisabled, isCapabilityEnabled } from '../shared/disabled-capabilities'
 import { agentHookServer, type AgentHookProviderSessionIdentity } from './agent-hooks/server'
 import { createHookProviderSessionInvalidator } from './agent-hooks/hook-provider-session-invalidation'
 import { createHookStatusSessionTabsInvalidator } from './agent-hooks/hook-status-session-tabs-invalidation'
@@ -2848,12 +2849,21 @@ void app.whenReady().then(async () => {
   pluginKillListService = new PluginKillListService({
     pluginsDataDir: getPluginsDataDir(app.getPath('userData'))
   })
-  await pluginKillListService.initialize()
+  // Why the service is still constructed: `find`/`reason` are called through
+  // optional chaining all over the plugin path and answer "not blocked" with no
+  // entries loaded. Only the launch-time fetch is skipped, which is the part
+  // that reports this install to onorca.dev on every start.
+  if (isCapabilityEnabled('plugins')) {
+    await pluginKillListService.initialize()
+  }
   pluginMarketplaceService = new PluginMarketplaceService({
     pluginsDataDir: getPluginsDataDir(app.getPath('userData')),
     getKillListEntry: (pluginKey) => pluginKillListService?.find(pluginKey) ?? null
   })
   const requestOfficialMarketplaceSeed = (): void => {
+    if (isCapabilityDisabled('plugins')) {
+      return
+    }
     if (store?.getSettings().pluginSystemEnabled !== true) {
       return
     }
@@ -2980,7 +2990,13 @@ void app.whenReady().then(async () => {
     emitPluginWorktreeLifecycle(event)
   })
   starNag = new StarNagService(store, stats)
-  starNag.start()
+  // Why the IPC handlers stay registered: the renderer queries nag state on
+  // mount, and an unhandled channel throws there. Not starting the service
+  // leaves that state permanently dormant, so nothing calls `gh` on the user's
+  // account.
+  if (isCapabilityEnabled('star-prompt')) {
+    starNag.start()
+  }
   starNag.registerIpcHandlers()
   runtimeService.setAgentBrowserBridge(
     new AgentBrowserBridge(browserManager, {

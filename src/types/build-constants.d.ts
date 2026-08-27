@@ -27,3 +27,9 @@ declare const ORCA_DIAGNOSTICS_TOKEN_URL: string | null
 // by electron-vite's main `define` block from `ORCA_RELEASE_REPO`; every build
 // that does not set it gets the literal `stablyai/orca`.
 declare const ORCA_RELEASE_REPO: string
+
+// Comma-separated capability ids this build ships without, parsed by
+// `src/shared/disabled-capabilities.ts`. Substituted into the main, renderer and
+// web bundles from ORCA_DISABLED_CAPABILITIES; empty in builds that set nothing,
+// which keeps every capability enabled.
+declare const ORCA_DISABLED_CAPABILITIES: string
