@@ -20,3 +20,10 @@ declare const ORCA_POSTHOG_WRITE_KEY: string | null
 // point a packaged build at a staging server without re-running the
 // release pipeline.
 declare const ORCA_DIAGNOSTICS_TOKEN_URL: string | null
+
+// The GitHub repo (`owner/name`) that published this binary. The updater's feed
+// URLs and the releases atom feed are derived from it, so a fork that ships its
+// own artifacts updates from its own releases instead of upstream's. Substituted
+// by electron-vite's main `define` block from `ORCA_RELEASE_REPO`; every build
+// that does not set it gets the literal `stablyai/orca`.
+declare const ORCA_RELEASE_REPO: string

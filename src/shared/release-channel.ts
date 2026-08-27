@@ -24,7 +24,12 @@ export const RELEASE_CHANNEL_LABELS: Readonly<Record<ReleaseChannel, string>> = 
 export const HOURLY_RELEASE_REPO = 'stablyai/orca-hourly'
 export const DAILY_RELEASE_REPO = 'stablyai/orca-daily'
 export const ADHOC_RELEASE_REPO = 'stablyai/orca-adhoc'
-export const MAIN_RELEASE_REPO = 'stablyai/orca'
+/** Substituted at build time from `ORCA_RELEASE_REPO` (see
+ *  `src/types/build-constants.d.ts`). The `typeof` guard keeps this module
+ *  usable from the renderer and web bundles, which carry no `define` block and
+ *  therefore fall back to the upstream repo. */
+export const MAIN_RELEASE_REPO =
+  typeof ORCA_RELEASE_REPO !== 'undefined' ? ORCA_RELEASE_REPO : 'stablyai/orca'
 
 export const HOURLY_PRERELEASE_IDENTIFIER = 'hourly'
 export const DAILY_PRERELEASE_IDENTIFIER = 'daily'

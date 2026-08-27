@@ -79,6 +79,7 @@ import {
   getVersionChannel,
   hasDedicatedReleaseRepo,
   isChannelSupportedOnPlatform,
+  MAIN_RELEASE_REPO,
   RELEASE_CHANNEL_LABELS,
   requiresManualDevChannelInstall,
   type ReleaseBuild,
@@ -1443,7 +1444,7 @@ async function pinDefaultReleaseFeed(
   } else {
     clearPrereleaseFallbackContext()
     clearPublishingWindowLastGoodCheck()
-    const url = 'https://github.com/stablyai/orca/releases/latest/download'
+    const url = `https://github.com/${MAIN_RELEASE_REPO}/releases/latest/download`
     console.info(
       `[updater] release feed fallback: current=${currentVersion} includePrerelease=${includePrerelease} → ${url}`
     )
@@ -2226,7 +2227,7 @@ export function setupAutoUpdater(
   if (activeUpdateSource === 'release') {
     autoUpdater.setFeedURL({
       provider: 'generic',
-      url: 'https://github.com/stablyai/orca/releases/latest/download'
+      url: `https://github.com/${MAIN_RELEASE_REPO}/releases/latest/download`
     })
   }
 
