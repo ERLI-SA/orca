@@ -60,7 +60,7 @@ jobs:
       # corporate checkout to one, which a build shipped on company machines has
       # no business doing. An id not listed there fails the build.
       ORCA_DISABLED_CAPABILITIES: >-
-        artifacts,computer-use,crash-report,feedback,mobile,orca-account,plugins,privacy,servers,share-skills,star-prompt,whats-new
+        artifacts,computer-use,crash-report,feedback,mobile,orca-account,plugins,privacy,servers,share-skills,star-prompt,whats-new,yolo-default
 
     steps:
       # Why the `||`: an empty `ref` input must fall through to checkout's own
