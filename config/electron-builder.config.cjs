@@ -44,6 +44,43 @@ if (!releaseRepoMatch) {
 }
 const [, releaseRepoOwner, releaseRepoName] = releaseRepoMatch
 
+// Why the fork needs its own version line: several ERLI builds can come from one
+// upstream tag — a fork-only fix ships without upstream moving — and the updater
+// compares versions, not tags. Reusing the upstream version makes every rebuild
+// look like the installed one, so nothing is ever offered.
+//
+// The scheme is `1.0.<build>-erli-upstream.<upstream version>`. The fork owns the
+// numbering outright rather than borrowing upstream's, so a version can never
+// claim to be an upstream release it is not, and the upstream tag it was built
+// from stays readable in the suffix.
+//
+// Why the build number is the patch and not a prerelease identifier: semver and
+// dpkg compare prerelease identifiers as text once one contains a hyphen, so
+// `erli.10-upstream` sorts below `erli.9-upstream`. Core version components are
+// always numeric, which makes ordering immune to that.
+//
+// Consequence to keep in mind: this line sorts below upstream's `1.4.x`, so the
+// first install after the switch is a manual one. Everything after it compares
+// within `1.0.x` and updates normally.
+const erliBuildNumber = process.env.ORCA_ERLI_BUILD_NUMBER?.trim()
+const upstreamBaseVersion = require('../package.json').version
+function buildErliVersion() {
+  if (!erliBuildNumber) {
+    return undefined
+  }
+  if (!/^\d+$/.test(erliBuildNumber)) {
+    throw new Error(`ORCA_ERLI_BUILD_NUMBER must be a positive integer, got: ${erliBuildNumber}`)
+  }
+  if (!/^\d+\.\d+\.\d+$/.test(upstreamBaseVersion)) {
+    throw new Error(
+      `ERLI builds expect a plain upstream version, got: ${upstreamBaseVersion}. ` +
+        'Build from a stable upstream tag, not an -rc one.'
+    )
+  }
+  return `1.0.${erliBuildNumber}-erli-upstream.${upstreamBaseVersion}`
+}
+const erliBuildVersion = buildErliVersion()
+
 const localBuildVersion =
   isMacRelease || isWinDevChannel ? undefined : process.env.ORCA_LOCAL_BUILD_VERSION
 const isHourlyChannel = isMacHourly || isWinHourly
@@ -118,9 +155,11 @@ module.exports = {
   protocols: [{ name: 'Orca', schemes: ['orca'] }],
   ...(devChannelBuildVersion
     ? { extraMetadata: { version: devChannelBuildVersion } }
-    : localBuildVersion
-      ? { extraMetadata: { version: localBuildVersion } }
-      : {}),
+    : erliBuildVersion
+      ? { extraMetadata: { version: erliBuildVersion } }
+      : localBuildVersion
+        ? { extraMetadata: { version: localBuildVersion } }
+        : {}),
   directories: {
     buildResources: 'resources/build'
   },
@@ -507,6 +546,13 @@ module.exports = {
   deb: {
     packageName: 'orca-ide',
     artifactName: 'orca-ide_${version}_${arch}.${ext}',
+    ...(erliBuildVersion
+      ? {
+          description:
+            'Next-gen IDE for parallel agentic development. ' +
+            `ERLI build from upstream v${upstreamBaseVersion}.`
+        }
+      : {}),
     // Why: xvfb lets the bundled `orca serve` CLI run browser panes on a headless
     // Linux host — Chromium needs a display server even for offscreen rendering,
     // and serve starts Xvfb itself when present (see ensure-virtual-display.ts).

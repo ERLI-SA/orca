@@ -55,6 +55,10 @@ jobs:
 
     env:
       ORCA_RELEASE_REPO: ${{ github.repository }}
+      # Why the run number: several ERLI builds can come from one upstream tag, and
+      # the updater compares versions rather than tags. This is what makes each one
+      # a distinct, higher version. See ORCA_ERLI_BUILD_NUMBER in the builder config.
+      ORCA_ERLI_BUILD_NUMBER: ${{ github.run_number }}
       # Every capability `src/shared/disabled-capabilities.ts` knows how to turn
       # off. These all either reach stablyai-operated services or hand a
       # corporate checkout to one, which a build shipped on company machines has
@@ -147,15 +151,20 @@ jobs:
         id: version
         run: |
           set -euo pipefail
-          version="$(node -p "require('./package.json').version")"
-          tag="erli-v${version}-${GITHUB_RUN_NUMBER}"
+          upstream="$(node -p "require('./package.json').version")"
+          # Why read it back from the builder config instead of rebuilding the
+          # string here: the config is what stamps the package, so a second copy
+          # of the rule in bash could drift from the artifact it names.
+          version="$(node -p "require('./config/electron-builder.config.cjs').extraMetadata.version")"
+          tag="erli-v${upstream}-${GITHUB_RUN_NUMBER}"
           # Why not github.sha: that is the SHA of the ref the workflow file came
           # from, which differs from the built ref whenever `ref` is overridden.
           sha="$(git rev-parse HEAD)"
+          echo "upstream=$upstream" >>"$GITHUB_OUTPUT"
           echo "version=$version" >>"$GITHUB_OUTPUT"
           echo "tag=$tag" >>"$GITHUB_OUTPUT"
           echo "sha=$sha" >>"$GITHUB_OUTPUT"
-          echo "Building $version from $sha as $tag"
+          echo "Building $version (upstream v$upstream) from $sha as $tag"
 
       - name: Build app
         run: pnpm build:release
@@ -257,6 +266,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.version.outputs.tag }}
           VERSION: ${{ steps.version.outputs.version }}
+          UPSTREAM: ${{ steps.version.outputs.upstream }}
           TARGET: ${{ steps.version.outputs.sha }}
           PRERELEASE: ${{ inputs.prerelease }}
           REPO: ${{ github.repository }}
@@ -266,7 +276,16 @@ jobs:
           deb_name="$(basename "$DEB")"
           notes="$(
             cat <<EOF
-          Unofficial Linux x64 build of Orca \`$VERSION\`, packaged by ERLI from $TARGET.
+          Unofficial Linux x64 build of Orca, packaged by ERLI from $TARGET.
+
+          Version \`$VERSION\`, built from upstream tag \`v$UPSTREAM\`. ERLI numbers its builds
+          itself — the \`1.0.x\` line is the fork's, and the upstream tag it came from is in the
+          suffix — so a fork-only rebuild is still offered as an update even when upstream has
+          not moved.
+
+          Coming from an earlier build numbered \`1.4.x\`? That one borrowed upstream's numbering,
+          which sorts above \`1.0.x\`, so install this one manually once. Updates after that work
+          normally.
 
           ## Install
 
@@ -287,7 +306,7 @@ jobs:
           https://github.com/stablyai/orca/releases.
           EOF
           )"
-          args=(--title "Orca $VERSION (ERLI build ${GITHUB_RUN_NUMBER})" --notes "$notes" --target "$TARGET")
+          args=(--title "Orca $VERSION (ERLI build ${GITHUB_RUN_NUMBER}, upstream v$UPSTREAM)" --notes "$notes" --target "$TARGET")
           if [ "$PRERELEASE" = "true" ]; then
             args+=(--prerelease)
           else
