@@ -279,13 +279,10 @@ jobs:
           Unofficial Linux x64 build of Orca, packaged by ERLI from $TARGET.
 
           Version \`$VERSION\`, built from upstream tag \`v$UPSTREAM\`. ERLI numbers its builds
-          itself — the \`1.0.x\` line is the fork's, and the upstream tag it came from is in the
+          itself — the \`2.x\` line is the fork's, and the upstream tag it came from is in the
           suffix — so a fork-only rebuild is still offered as an update even when upstream has
-          not moved.
-
-          Coming from an earlier build numbered \`1.4.x\`? That one borrowed upstream's numbering,
-          which sorts above \`1.0.x\`, so install this one manually once. Updates after that work
-          normally.
+          not moved. It sorts above any \`1.4.x\` an earlier build carried, so an existing
+          install updates normally.
 
           ## Install
 

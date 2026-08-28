@@ -49,19 +49,19 @@ const [, releaseRepoOwner, releaseRepoName] = releaseRepoMatch
 // compares versions, not tags. Reusing the upstream version makes every rebuild
 // look like the installed one, so nothing is ever offered.
 //
-// The scheme is `1.0.<build>-erli-upstream.<upstream version>`. The fork owns the
+// The scheme is `2.0.<build>-erli-upstream.<upstream version>`. The fork owns the
 // numbering outright rather than borrowing upstream's, so a version can never
 // claim to be an upstream release it is not, and the upstream tag it was built
 // from stays readable in the suffix.
+//
+// Why major 2: it sorts above upstream's 1.4.x, so a machine running any earlier
+// build — including one that carried the upstream version verbatim — is offered
+// this one as an ordinary update rather than needing a manual downgrade.
 //
 // Why the build number is the patch and not a prerelease identifier: semver and
 // dpkg compare prerelease identifiers as text once one contains a hyphen, so
 // `erli.10-upstream` sorts below `erli.9-upstream`. Core version components are
 // always numeric, which makes ordering immune to that.
-//
-// Consequence to keep in mind: this line sorts below upstream's `1.4.x`, so the
-// first install after the switch is a manual one. Everything after it compares
-// within `1.0.x` and updates normally.
 const erliBuildNumber = process.env.ORCA_ERLI_BUILD_NUMBER?.trim()
 const upstreamBaseVersion = require('../package.json').version
 function buildErliVersion() {
@@ -77,7 +77,7 @@ function buildErliVersion() {
         'Build from a stable upstream tag, not an -rc one.'
     )
   }
-  return `1.0.${erliBuildNumber}-erli-upstream.${upstreamBaseVersion}`
+  return `2.0.${erliBuildNumber}-erli-upstream.${upstreamBaseVersion}`
 }
 const erliBuildVersion = buildErliVersion()
 

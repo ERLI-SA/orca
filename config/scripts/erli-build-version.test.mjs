@@ -34,8 +34,17 @@ function dpkgGreater(left, right) {
 }
 
 describe('ERLI build version', () => {
-  it("is the fork's own 1.0.x line, carrying the upstream tag it was built from", () => {
-    expect(erliVersion(7)).toBe('1.0.7-erli-upstream.1.4.190')
+  it("is the fork's own 2.0.x line, carrying the upstream tag it was built from", () => {
+    expect(erliVersion(7)).toBe('2.0.7-erli-upstream.1.4.190')
+  })
+
+  // Why this one matters most: earlier builds shipped upstream's version verbatim,
+  // so the fork's line has to sort above 1.4.x or an installed machine is never
+  // offered an update again.
+  it('sorts above an upstream version an earlier build could have carried', () => {
+    expect(compareAppVersions(erliVersion(7), '1.4.190')).toBeGreaterThan(0)
+    expect(compareAppVersions(erliVersion(7), '1.4.201')).toBeGreaterThan(0)
+    expect(dpkgGreater(debVersion(7), '1.4.190')).toBe(true)
   })
 
   it('is absent unless a build number is set, so local builds stay upstream', () => {
