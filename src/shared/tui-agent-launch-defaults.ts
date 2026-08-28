@@ -1,16 +1,25 @@
 import { isTuiAgent } from './tui-agent-config'
 import { YOLO_TUI_AGENT_ARGS, YOLO_TUI_AGENT_ENV } from './tui-agent-permissions'
 import type { TuiAgent } from './tui-agent'
+import { isCapabilityEnabled } from './disabled-capabilities'
 
 const UNSUPPORTED_TUI_AGENT_ARGS: Partial<Record<TuiAgent, readonly string[]>> = {
   opencode: ['--dangerously-skip-permissions'],
   kilo: ['--dangerously-skip-permissions']
 }
 
-export const DEFAULT_TUI_AGENT_ARGS: Partial<Record<TuiAgent, string>> = YOLO_TUI_AGENT_ARGS
+// Why the default matters more than the setting: an agent launched without an
+// explicit entry falls through to these, so upstream's default hands every agent a
+// permission-bypass flag before anyone opens Settings. Empty defaults mean the agent
+// asks; opting in stays one toggle away in Settings > Agents.
+export const DEFAULT_TUI_AGENT_ARGS: Partial<Record<TuiAgent, string>> = isCapabilityEnabled(
+  'yolo-default'
+)
+  ? YOLO_TUI_AGENT_ARGS
+  : {}
 
 export const DEFAULT_TUI_AGENT_ENV: Partial<Record<TuiAgent, Record<string, string>>> =
-  YOLO_TUI_AGENT_ENV
+  isCapabilityEnabled('yolo-default') ? YOLO_TUI_AGENT_ENV : {}
 
 function argPattern(arg: string): RegExp {
   return new RegExp(`(^|\\s)${arg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=\\s|$)`, 'g')

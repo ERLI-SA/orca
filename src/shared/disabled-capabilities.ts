@@ -33,7 +33,14 @@ export const DISABLEABLE_CAPABILITIES = [
   /** The "star Orca on GitHub" prompt, which acts on the user's gh account. */
   'star-prompt',
   /** Changelog and update-nudge polling against onorca.dev/whats-new. */
-  'whats-new'
+  'whats-new',
+  /**
+   * Launching every agent with its permission-bypass flag by default —
+   * `--dangerously-skip-permissions`, `--dangerously-bypass-approvals-and-sandbox`,
+   * `--yolo`. Disabling this makes the default launch ask for consent; the user can
+   * still opt in per agent, or for all of them, in Settings > Agents.
+   */
+  'yolo-default'
 ] as const
 
 export type DisableableCapability = (typeof DISABLEABLE_CAPABILITIES)[number]
