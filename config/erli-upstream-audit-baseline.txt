@@ -1,0 +1,11 @@
+# The upstream commit ERLI has audited up to. `pnpm run audit:upstream-sync`
+# diffs upstream/main against this SHA; nothing before it is re-reviewed.
+#
+# Only move this line after an audit round closes with a verdict recorded in
+# the ERLI audit doc kept outside this repo. Moving it without one silently marks
+# unread code as read.
+#
+# Format: one line, `<sha> <YYYY-MM-DD> <auditor>`. Comments and blanks ignored.
+# Keep <auditor> a role, not a person: this repository is public, and the ledger
+# that records who closed a round is kept outside it.
+e50cc309c3466e02b55e794c3ee910f1e2dd6c2b 2026-08-28 erli-maintainer
