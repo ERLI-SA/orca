@@ -35,7 +35,7 @@ function dpkgGreater(left, right) {
 
 describe('ERLI build version', () => {
   it("is the fork's own 2.0.x line, carrying the upstream tag it was built from", () => {
-    expect(erliVersion(7)).toBe('2.0.7-erli-upstream.1.4.190')
+    expect(erliVersion(7)).toBe('2.0.7-erli-upstream.1.4.197')
   })
 
   // Why this one matters most: earlier builds shipped upstream's version verbatim,
