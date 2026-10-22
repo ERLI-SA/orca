@@ -32,7 +32,7 @@ const AUDIT_DOC = 'the ERLI audit doc (outside this repository)'
 // a capability this build ships without. Add a path here whenever a fork commit
 // starts owning one.
 export const FORK_OWNED_PATHS = [
-  '.github/workflows/erli-linux-release.yml',
+  '.github/workflows/erli-release.yml',
   'config/electron-builder.config.cjs',
   'config/build-plugins/erli-defines.ts',
   'config/tsconfig.cli.json',

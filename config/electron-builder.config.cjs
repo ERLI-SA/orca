@@ -127,6 +127,10 @@ function buildErliVersion() {
   return `2.0.${erliBuildNumber}-erli-upstream.${upstreamBaseVersion}`
 }
 const erliBuildVersion = buildErliVersion()
+// Why ERLI Windows builds count as unsigned like the dev channels: the fork has no
+// SignPath (or other Authenticode) identity, so an installed build must not demand
+// one from its next update. See the `win` block for what that switches off.
+const isUnsignedWinBuild = isWinDevChannel || erliBuildVersion !== undefined
 
 const localBuildVersion =
   isMacRelease || isWinDevChannel ? undefined : process.env.ORCA_LOCAL_BUILD_VERSION
@@ -603,9 +607,9 @@ module.exports = {
     // its existing channel split above.
     signtoolOptions: {
       sign: signWindowsUninstallerViaSignPath,
-      ...(isWinDevChannel ? {} : { publisherName: 'SignPath Foundation' })
+      ...(isUnsignedWinBuild ? {} : { publisherName: 'SignPath Foundation' })
     },
-    ...(isWinDevChannel ? { verifyUpdateCodeSignature: false } : {}),
+    ...(isUnsignedWinBuild ? { verifyUpdateCodeSignature: false } : {}),
     extraResources: [
       ...commonExtraResources,
       ...windowsRuntimeResources,
