@@ -1,11 +1,10 @@
+import { resetRuntimeEnvironmentStatusOwners } from './runtime-environment-request-connections'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import {
-  ELECTRON_REMOTE_RUNTIME_CLIENT_CAPABILITIES,
-  REMOTE_RUNTIME_SHARED_CONTROL_CAPABILITY
-} from '../../shared/protocol-version'
+import { REMOTE_RUNTIME_SHARED_CONTROL_CAPABILITY } from '../../shared/protocol-version'
+import { ELECTRON_REMOTE_RUNTIME_CLIENT_CAPABILITIES } from '../../shared/electron-remote-runtime-client-capabilities'
 import * as environmentStore from '../../shared/runtime-environment-store'
 import { RemoteRuntimeClientError } from '../../shared/remote-runtime-client-error'
 import { RuntimeRpcCallQueueOverloadError } from '../../shared/runtime-rpc-call-queue'
@@ -44,6 +43,7 @@ const {
 }))
 
 vi.mock('electron', () => ({
+  BrowserWindow: { getAllWindows: () => [] },
   app: { getPath: getPathMock },
   ipcMain: {
     handle: handleMock,
@@ -58,18 +58,23 @@ vi.mock('../../shared/remote-runtime-client', () => ({
   subscribeRemoteRuntimeRequest: subscribeRemoteRuntimeRequestMock
 }))
 
-vi.mock('./runtime-environment-request-connections', () => ({
-  sendRemoteRuntimeConnectionRequest: sendRemoteRuntimeConnectionRequestMock,
-  sendRemoteRuntimeSharedControlRequest: sendRemoteRuntimeSharedControlRequestMock,
-  subscribeRemoteRuntimeSharedControlRequest: subscribeRemoteRuntimeSharedControlRequestMock,
-  getRemoteRuntimeSharedControlDiagnostics: getRemoteRuntimeSharedControlDiagnosticsMock,
-  reconnectRemoteRuntimeSharedControlConnection: reconnectRemoteRuntimeSharedControlConnectionMock,
-  retryRemoteRuntimeSharedControlConnectionsNow: retryRemoteRuntimeSharedControlConnectionsNowMock,
-  retryRemoteRuntimeSharedControlConnectionNow: vi.fn(),
-  ensureRemoteRuntimeSharedControlConnection: vi.fn(),
-  pauseRemoteRuntimeSharedControlRetry: vi.fn(),
-  closeRemoteRuntimeRequestConnection: closeRemoteRuntimeRequestConnectionMock
-}))
+vi.mock('./runtime-environment-request-connections', async () => {
+  const { withRuntimeStatusOwners } = await import('./runtime-environments-ipc-test-harness')
+  return withRuntimeStatusOwners({
+    sendRemoteRuntimeConnectionRequest: sendRemoteRuntimeConnectionRequestMock,
+    sendRemoteRuntimeSharedControlRequest: sendRemoteRuntimeSharedControlRequestMock,
+    subscribeRemoteRuntimeSharedControlRequest: subscribeRemoteRuntimeSharedControlRequestMock,
+    getRemoteRuntimeSharedControlDiagnostics: getRemoteRuntimeSharedControlDiagnosticsMock,
+    reconnectRemoteRuntimeSharedControlConnection:
+      reconnectRemoteRuntimeSharedControlConnectionMock,
+    retryRemoteRuntimeSharedControlConnectionsNow:
+      retryRemoteRuntimeSharedControlConnectionsNowMock,
+    retryRemoteRuntimeSharedControlConnectionNow: vi.fn(),
+    ensureRemoteRuntimeSharedControlConnection: vi.fn(),
+    pauseRemoteRuntimeSharedControlRetry: vi.fn(),
+    closeRemoteRuntimeRequestConnection: closeRemoteRuntimeRequestConnectionMock
+  })
+})
 
 import { registerRuntimeEnvironmentHandlers } from './runtime-environments'
 import { channelHandlerLookup, pairingCode } from './runtime-environments-ipc-test-harness'
@@ -112,6 +117,7 @@ describe('registerRuntimeEnvironmentHandlers', () => {
   })
 
   afterEach(() => {
+    resetRuntimeEnvironmentStatusOwners()
     rmSync(userDataPath, { recursive: true, force: true })
   })
 
@@ -339,7 +345,7 @@ describe('registerRuntimeEnvironmentHandlers', () => {
       undefined,
       15_000,
       undefined,
-      undefined,
+      expect.any(AbortSignal),
       ELECTRON_REMOTE_RUNTIME_CLIENT_CAPABILITIES
     )
     expect(sendRemoteRuntimeSharedControlRequestMock).toHaveBeenCalledWith(
@@ -408,6 +414,42 @@ describe('registerRuntimeEnvironmentHandlers', () => {
     expect(sendRemoteRuntimeSharedControlRequestMock).toHaveBeenCalledTimes(1)
   })
 
+  it('rejects an import mutation when its capability-proven runtime was replaced before routing', async () => {
+    registerRuntimeEnvironmentHandlers(store as never)
+    const add = handler<
+      { name: string; pairingCode: string },
+      { environment: { id: string; name: string } }
+    >('runtimeEnvironments:addFromPairingCode')
+    const added = await add(null, { name: 'desk', pairingCode: pairingCode() })
+    environmentStore.markEnvironmentUsed(userDataPath, added.environment.id, {
+      runtimeId: 'runtime-replacement'
+    })
+
+    const call = handler<
+      {
+        selector: string
+        method: string
+        expectedEnvironmentRuntimeId?: string
+      },
+      RuntimeRpcResponse<unknown>
+    >('runtimeEnvironments:call')
+    await expect(
+      call(null, {
+        selector: 'desk',
+        method: 'files.writeBase64',
+        expectedEnvironmentRuntimeId: 'runtime-capability-proven'
+      })
+    ).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: 'runtime_environment_changed',
+        message: 'Runtime environment identity changed; refresh and try again'
+      }
+    })
+    expect(sendRemoteRuntimeRequestMock).not.toHaveBeenCalled()
+    expect(sendRemoteRuntimeSharedControlRequestMock).not.toHaveBeenCalled()
+  })
+
   it.each([
     [
       new RemoteRuntimeClientError(
@@ -451,7 +493,7 @@ describe('registerRuntimeEnvironmentHandlers', () => {
     }
   )
 
-  it('keeps uncoded call failures on the rejected IPC fallback path', async () => {
+  it('returns uncoded status failures through the owner response', async () => {
     registerRuntimeEnvironmentHandlers(store as never)
     sendRemoteRuntimeRequestMock.mockRejectedValue(new Error('shared down'))
 
@@ -464,9 +506,10 @@ describe('registerRuntimeEnvironmentHandlers', () => {
       'runtimeEnvironments:call'
     )
 
-    await expect(call(null, { selector: 'desk', method: 'status.get' })).rejects.toThrow(
-      'shared down'
-    )
+    await expect(call(null, { selector: 'desk', method: 'status.get' })).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'runtime_unavailable', message: 'shared down' }
+    })
   })
 
   it('does not fall back after a shared-control request fails on a supported runtime', async () => {
@@ -538,6 +581,69 @@ describe('registerRuntimeEnvironmentHandlers', () => {
       'session.tabs.listAll'
     ])
     expect(sendRemoteRuntimeSharedControlRequestMock).not.toHaveBeenCalled()
+  })
+
+  it('reads session snapshots over a ready shared-control socket instead of opening one per call', async () => {
+    registerRuntimeEnvironmentHandlers(store as never)
+    sendRemoteRuntimeRequestMock.mockResolvedValue({
+      id: 'status',
+      ok: true,
+      result: {
+        runtimeId: 'runtime-remote',
+        capabilities: [REMOTE_RUNTIME_SHARED_CONTROL_CAPABILITY]
+      },
+      _meta: { runtimeId: 'runtime-remote' }
+    })
+    sendRemoteRuntimeSharedControlRequestMock.mockImplementation(async (_id, _pairing, method) => ({
+      id: method,
+      ok: true,
+      result: { tabs: [] },
+      _meta: { runtimeId: 'runtime-remote' }
+    }))
+    getRemoteRuntimeSharedControlDiagnosticsMock.mockReturnValue({ state: 'ready' })
+
+    const add = handler<
+      { name: string; pairingCode: string },
+      { environment: { id: string; name: string } }
+    >('runtimeEnvironments:addFromPairingCode')
+    await add(null, { name: 'desk', pairingCode: pairingCode() })
+    const call = handler<
+      { selector: string; method: string; params?: unknown },
+      { ok: true; result: unknown }
+    >('runtimeEnvironments:call')
+
+    // A worktree switch lists its tabs; before, each list opened and authenticated a new socket.
+    for (let i = 0; i < 10; i += 1) {
+      await expect(
+        call(null, { selector: 'desk', method: 'session.tabs.list', params: { worktree: 'id:w' } })
+      ).resolves.toMatchObject({ ok: true })
+    }
+    await expect(
+      call(null, { selector: 'desk', method: 'session.tabs.listAll' })
+    ).resolves.toMatchObject({ ok: true })
+
+    expect(sendRemoteRuntimeRequestMock.mock.calls.map((entry) => entry[1])).toEqual(['status.get'])
+    expect(sendRemoteRuntimeSharedControlRequestMock.mock.calls.map((entry) => entry[2])).toEqual([
+      ...Array.from({ length: 10 }, () => 'session.tabs.list'),
+      'session.tabs.listAll'
+    ])
+
+    // The shared socket dropped (a host restart): snapshot recovery goes back to one-shot.
+    getRemoteRuntimeSharedControlDiagnosticsMock.mockReturnValue({ state: 'reconnecting' })
+    sendRemoteRuntimeRequestMock.mockResolvedValue({
+      id: 'session.tabs.list',
+      ok: true,
+      result: { tabs: [] },
+      _meta: { runtimeId: 'runtime-remote' }
+    })
+    await expect(
+      call(null, { selector: 'desk', method: 'session.tabs.list', params: { worktree: 'id:w' } })
+    ).resolves.toMatchObject({ ok: true })
+    expect(sendRemoteRuntimeRequestMock.mock.calls.map((entry) => entry[1])).toEqual([
+      'status.get',
+      'session.tabs.list'
+    ])
+    expect(sendRemoteRuntimeSharedControlRequestMock).toHaveBeenCalledTimes(11)
   })
 
   it('limits background one-shot RPCs without blocking foreground runtime calls', async () => {

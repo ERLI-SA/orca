@@ -3,12 +3,10 @@ import { spawnMock } from './pty-ipc-mock-registry'
 import { setupPtyIpcSuite } from './pty-ipc-test-harness'
 import { makePaneKey } from '../../shared/stable-pane-id'
 import { OrcaRuntimeService } from '../runtime/orca-runtime'
-import {
-  registerPtyHandlers,
-  clearProviderPtyState,
-  setLocalPtyProvider,
-  isCurrentPtyExit
-} from './pty'
+import { registerPtyHandlers } from './pty/register-handlers'
+import { clearProviderPtyState } from './pty/provider/state-cleanup'
+import { setLocalPtyProvider } from './pty/provider/registry'
+import { isCurrentPtyExit } from './pty/provider/ownership-state'
 
 vi.mock('electron', () => import('./pty-ipc-mock-registry').then((m) => m.electronModuleMock()))
 vi.mock('fs', () => import('./pty-ipc-mock-registry').then((m) => m.fsModuleMock()))
@@ -159,7 +157,8 @@ describe('registerPtyHandlers', () => {
       leafId,
       ptyId: expect.any(String),
       incarnationId: expect.any(String),
-      hostAdmittedMembership: true
+      mayCreate: false,
+      origin: 'spawn'
     })
   })
   it('shuts down a split PTY when its expected source binding was retired', async () => {
@@ -518,7 +517,8 @@ describe('registerPtyHandlers', () => {
       leafId,
       ptyId: 'pty-shared',
       startupCwd: '/tmp',
-      hostAdmittedMembership: true
+      mayCreate: false,
+      origin: 'spawn'
     })
   })
 })

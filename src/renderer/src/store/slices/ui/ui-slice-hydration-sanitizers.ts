@@ -1,3 +1,4 @@
+import { normalizeExplorerDisplayRootByWorktree } from '../../../../../shared/file-explorer-display-root'
 import type { AppState } from '../../types'
 import type { PersistedTrustedOrcaHooks } from '../../../../../shared/orca-yaml-hook-types'
 import type { PersistedUIState } from '../../../../../shared/persisted-ui-state-types'
@@ -10,10 +11,7 @@ import type {
 import type { WorkspaceCleanupDismissal } from '../../../../../shared/workspace-cleanup'
 import { WORKSPACE_CLEANUP_CLASSIFIER_VERSION } from '../../../../../shared/workspace-cleanup'
 import { isTopLevelView } from '../../../../../shared/top-level-view'
-import {
-  normalizeVisibleExecutionHostIds,
-  normalizeExecutionHostScope
-} from '../../../../../shared/execution-host'
+import { resolveVisibleWorkspaceHostIds } from '../../../../../shared/workspace-view/workspace-host-visibility'
 import { persistedUIValuesEqual } from '../../../../../shared/persisted-ui-equality'
 import { DEFAULT_STATUS_BAR_ITEMS } from '../../../../../shared/constants'
 import type { UISlice } from './ui-slice-contract'
@@ -191,12 +189,7 @@ export function hydratedUIPartialMatchesState(
 export function normalizeHydratedVisibleWorkspaceHostIds(
   ui: PersistedUIState
 ): VisibleWorkspaceHostIds {
-  const visibleHostIds = normalizeVisibleExecutionHostIds(ui.visibleWorkspaceHostIds)
-  if (visibleHostIds) {
-    return visibleHostIds
-  }
-  const legacyScope = normalizeExecutionHostScope(ui.workspaceHostScope)
-  return legacyScope === 'all' ? null : [legacyScope]
+  return resolveVisibleWorkspaceHostIds(ui.visibleWorkspaceHostIds, ui.workspaceHostScope)
 }
 
 export function clampPetSize(
@@ -237,4 +230,29 @@ export function migrateStatusBarItems(items: readonly string[] | undefined): Sta
     }
   }
   return out as StatusBarItem[]
+}
+
+export function hydrateUnexpectedSignoutDismissal(
+  state: Pick<UISlice, 'unexpectedSignoutDismissedVersions'>,
+  version: string | null | undefined
+): Pick<UISlice, 'dismissedUnexpectedSignoutVersion' | 'unexpectedSignoutDismissedVersions'> {
+  const observed = state.unexpectedSignoutDismissedVersions
+  return {
+    dismissedUnexpectedSignoutVersion: version ?? null,
+    // A later sync must never undo any dismissal observed in this session.
+    unexpectedSignoutDismissedVersions:
+      typeof version === 'string' && !observed.includes(version) ? [...observed, version] : observed
+  }
+}
+
+/** Normalizes persisted explorer records before hydration, including malformed or absent legacy values. */
+export function sanitizeExplorerPreferences(
+  ui: PersistedUIState
+): Pick<AppState, 'explorerDisplayRootByWorktree' | 'showDotfilesByWorktree'> {
+  return {
+    explorerDisplayRootByWorktree: normalizeExplorerDisplayRootByWorktree(
+      ui.explorerDisplayRootByWorktree
+    ),
+    showDotfilesByWorktree: sanitizeShowDotfilesByWorktree(ui.showDotfilesByWorktree)
+  }
 }

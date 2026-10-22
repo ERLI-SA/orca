@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { buildConnectionDiagnosticsReport } from './connection-diagnostics-report'
 
 const NOW = Date.UTC(2026, 6, 9, 22, 0, 0)
@@ -54,6 +54,29 @@ describe('buildConnectionDiagnosticsReport', () => {
     expect(report).not.toContain('(Tailscale)')
     expect(report).toContain('Last connected: never this session')
     expect(report).toContain('No connection events recorded.')
+  })
+
+  it('names the shell build and bridge version under the app line when given', () => {
+    const args = {
+      hostName: 'Host 3',
+      endpoint: 'ws://192.168.1.50:6768',
+      state: 'connected' as const,
+      reconnectAttempts: 0,
+      lastConnectedAt: null,
+      platform: 'ios 26',
+      appVersion: '0.0.60',
+      entries: [],
+      nowMs: NOW
+    }
+    const lines = buildConnectionDiagnosticsReport({
+      ...args,
+      shell: { kind: 'ota', bridgeProtocolVersion: 1 }
+    }).split('\n')
+    expect(lines.slice(2, 4)).toEqual([
+      'App: Orca Mobile 0.0.60 · ios 26',
+      'Shell: ota · bridge protocol 1'
+    ])
+    expect(buildConnectionDiagnosticsReport(args)).not.toContain('Shell:')
   })
 
   it('explains the most likely cause and redacts credentials before copying', () => {
@@ -142,4 +165,64 @@ describe('buildConnectionDiagnosticsReport', () => {
       2048
     )
   })
+
+  it.each([2047, 2048, 2049])('keeps the existing event boundary at %i bytes', (bytes) => {
+    const prefix = `${new Date(NOW).toISOString()} [error] `
+    const marker = ' … [truncated]'
+    const message = 'a'.repeat(bytes - prefix.length)
+    const report = buildConnectionDiagnosticsReport({
+      hostName: 'fixture',
+      endpoint: 'ws://192.168.1.2:6768',
+      state: 'connected',
+      reconnectAttempts: 0,
+      lastConnectedAt: null,
+      platform: 'ios',
+      appVersion: 'fixture',
+      entries: [{ id: 'boundary', ts: NOW, level: 'error', message }],
+      nowMs: NOW
+    })
+    const available = 2048 - prefix.length - new TextEncoder().encode(marker).byteLength
+    expect(report.split('\n').at(-1)).toBe(
+      bytes <= 2048 ? `${prefix}${message}` : `${prefix}${'a'.repeat(available)}${marker}`
+    )
+  })
+
+  it.each(['a', 'é', '界', '😀', '\ud800', '\udc00'])(
+    'truncates %j without per-character encoding',
+    (token) => {
+      const encode = vi.spyOn(TextEncoder.prototype, 'encode')
+      const entry = Object.freeze({
+        id: 'bounded',
+        ts: NOW,
+        level: 'error' as const,
+        message: token.repeat(3000)
+      })
+      let report: string
+      let calls: number
+      try {
+        report = buildConnectionDiagnosticsReport({
+          hostName: 'fixture',
+          endpoint: 'ws://192.168.1.2:6768',
+          state: 'reconnecting',
+          reconnectAttempts: 1,
+          lastConnectedAt: null,
+          platform: 'android',
+          appVersion: 'fixture',
+          entries: Object.freeze([entry]),
+          nowMs: NOW
+        })
+        calls = encode.mock.calls.length
+      } finally {
+        encode.mockRestore()
+      }
+      const prefix = `${new Date(NOW).toISOString()} [error] `
+      const marker = ' … [truncated]'
+      const available = 2048 - new TextEncoder().encode(prefix + marker).byteLength
+      const tokenBytes = new TextEncoder().encode(token).byteLength
+      expect(report.split('\n').at(-1)).toBe(
+        `${prefix}${token.repeat(Math.floor(available / tokenBytes))}${marker}`
+      )
+      expect(calls).toBeLessThanOrEqual(2)
+    }
+  )
 })

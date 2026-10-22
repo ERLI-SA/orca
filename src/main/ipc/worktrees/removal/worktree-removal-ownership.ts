@@ -1,5 +1,6 @@
 import type { OrcaRuntimeService } from '../../../runtime/orca-runtime'
-import { getSshPtyProvider, getLocalPtyProvider, clearProviderPtyState } from '../../pty'
+import { getLocalPtyProvider } from '../../pty/provider/registry'
+import { clearProviderPtyState } from '../../pty/provider/state-cleanup'
 import { killAllProcessesForWorktree } from '../../../runtime/worktree-teardown'
 import type { Store } from '../../../persistence/loading-store/store'
 import { getRepoExecutionHostId } from '../../../../shared/execution-host'
@@ -8,6 +9,7 @@ import type { Repo } from '../../../../shared/repo-types'
 import { hasWorktreeRemovalRepoOwnerOnOtherHost } from '../../../worktree-removal-repo-owner'
 import { getRepoIdFromWorktreeId } from '../../../../shared/worktree/id'
 import { advertisedUrlWatcher } from '../../../ports/advertised-url-watcher'
+import { agentHookServer } from '../../../agent-hooks/server'
 import { localhostWorktreeLabelProxy } from '../../../localhost-worktree-label-proxy'
 import { deleteWorktreeHistoryDir } from '../../../terminal-history-deletion'
 import { pruneWorktreePRRefreshAliases } from '../../../github/pr-refresh-coordinator'
@@ -21,8 +23,8 @@ export async function stopPtysForDestructiveWorktreeRemoval(
   options: { connectionId?: string; allowUnverifiedStop?: boolean } = {}
 ): Promise<void> {
   const { connectionId, allowUnverifiedStop } = options
-  const provider = connectionId ? getSshPtyProvider(connectionId) : getLocalPtyProvider()
-  if (!provider) {
+  // Why: this process holds no SSH PTY provider, so an SSH workspace's terminals cannot be stopped here.
+  if (connectionId) {
     throw new Error(`PTY provider unavailable for worktree deletion: ${worktreeId}`)
   }
   const teardownResult = await killAllProcessesForWorktree(worktreeId, {
@@ -31,20 +33,24 @@ export async function stopPtysForDestructiveWorktreeRemoval(
     // workspace's terminals on another connection — and the selector lookup this replaces
     // throws `selector_ambiguous` the moment two hosts own the id.
     resolvedWorktreeId: worktreeId,
-    ...(connectionId ? { resolvedConnectionId: connectionId } : {}),
-    localProvider: provider,
+    localProvider: getLocalPtyProvider(),
     onPtyStopped: clearProviderPtyState,
     requirePhysicalStop: true,
     // Why (#11960): set only by an explicit Force Delete, never by the ordinary
     // confirmation — otherwise the gate would be off on the primary delete path.
-    ...(allowUnverifiedStop ? { allowUnverifiedStop: true } : {}),
-    ...(connectionId ? { includeLocalRegistry: false } : {})
+    ...(allowUnverifiedStop ? { allowUnverifiedStop: true } : {})
   })
+  // Structured sessions are counted here too: closing a user's chat is now an ordinary outcome
+  // of this verb, and a removal that closed one but no PTY would otherwise log nothing at all.
+  const structuredStopped = teardownResult.structuredStopped ?? 0
   const total =
-    teardownResult.runtimeStopped + teardownResult.providerStopped + teardownResult.registryStopped
+    teardownResult.runtimeStopped +
+    teardownResult.providerStopped +
+    teardownResult.registryStopped +
+    structuredStopped
   if (total > 0) {
     console.info(
-      `[worktree-teardown] ${worktreeId} killed runtime=${teardownResult.runtimeStopped} provider=${teardownResult.providerStopped} registry=${teardownResult.registryStopped}`
+      `[worktree-teardown] ${worktreeId} killed runtime=${teardownResult.runtimeStopped} provider=${teardownResult.providerStopped} registry=${teardownResult.registryStopped} structured=${structuredStopped}`
     )
   }
 }
@@ -82,6 +88,8 @@ export function removeWorktreeMetadataAndTransientState(
   } else {
     store.removeWorktreeMeta(worktreeId)
   }
+  // Why outside the same-id gate: retirement is per host and per pane, so a surviving owner keeps its own.
+  agentHookServer.dropStatusEntriesForRemovedWorktree(worktreeId, hostId ?? persistedHostId)
   if (!preservesSameIdOwner) {
     advertisedUrlWatcher.forgetWorktree(worktreeId)
     // Why: drop this worktree's localhost label routes so they don't accumulate in the proxy's route maps all session.
