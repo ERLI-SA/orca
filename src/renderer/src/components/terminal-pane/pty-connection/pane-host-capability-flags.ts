@@ -238,9 +238,11 @@ export function installPaneHostCapabilityFlags(session: ConnectPanePtySession): 
   session.hasTerminalInputForCurrentPty = (): boolean =>
     session.lastTerminalInputGeneration === session.terminalInputGeneration &&
     Number.isFinite(session.lastTerminalInputAt)
-  session.markTerminalInputAttempted = (generation = session.terminalInputGeneration): void => {
+  // Returns the generation it credited, so an async ack can settle against the PTY it was typed into.
+  session.markTerminalInputAttempted = (generation = session.terminalInputGeneration): number => {
     session.lastTerminalInputAt = performance.now()
     session.lastTerminalInputGeneration = generation
+    return generation
   }
   session.markTerminalInputSent = (generation = session.terminalInputGeneration): void => {
     session.markTerminalInputAttempted(generation)

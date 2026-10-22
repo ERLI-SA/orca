@@ -63,6 +63,7 @@ export const FORK_OWNED_PATHS = [
   'src/renderer/src/components/sidebar/SidebarSettingsHelpMenu.tsx',
   'src/renderer/src/components/skills/skill-share-selection.ts',
   'src/renderer/src/components/terminal-pane/pty-connection/direct-ssh-retry-status.ts',
+  'src/renderer/src/components/terminal-pane/pty-connection/pane-host-capability-flags.ts',
   'src/renderer/src/components/terminal-pane/pty-connection/pane-pty-visibility-bind.ts',
   'src/renderer/src/components/terminal-pane/pty-connection/pty-exit-hibernate.ts',
   'src/renderer/src/components/terminal-pane/pty-connection/pty-input-forward.ts',

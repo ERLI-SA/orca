@@ -95,8 +95,7 @@ export function installPtyInputForward(session: ConnectPanePtySession): void {
     // Why captured once here: past this point every branch forwards to the transport,
     // and an acknowledged write settles asynchronously — a PTY that exits first would
     // otherwise credit this input to its replacement.
-    const inputGeneration = session.terminalInputGeneration
-    session.markTerminalInputAttempted(inputGeneration)
+    const inputGeneration = session.markTerminalInputAttempted()
     // Why xterm's provenance: its own focus reports reach onData too, and no person typed them.
     const inputKind = wasUserInput ? 'driving' : 'query-reply'
     const intent = session.pendingTerminalInputIntentFor(data)
@@ -149,8 +148,8 @@ export function installPtyInputForward(session: ConnectPanePtySession): void {
       session.setPendingTerminalInputWrite(writePromise)
       return
     }
+    session.claimViewportForUserActivity(data)
     if (intent) {
-      session.claimViewportForUserActivity(data)
       if (session.transport.sendInput(data, inputKind)) {
         session.markAcceptedTerminalInputSent(inputGeneration)
         session.observeAcceptedShellCommandInput(data)
@@ -161,7 +160,6 @@ export function installPtyInputForward(session: ConnectPanePtySession): void {
       session.clearPendingTerminalInputIntent()
       return
     }
-    session.claimViewportForUserActivity(data)
     if (session.transport.sendInput(data, inputKind)) {
       session.markAcceptedTerminalInputSent(inputGeneration)
       session.observeAcceptedShellCommandInput(data)

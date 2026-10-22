@@ -77,6 +77,12 @@ export function isCapabilityEnabled(capability: DisableableCapability): boolean 
   return !DISABLED.has(capability)
 }
 
+/** `items` when the capability ships, else nothing — gates a list entry with a single spread
+ *  at its call site, which matters in upstream files sitting at their max-lines budget. */
+export function ifCapabilityEnabled<T>(capability: DisableableCapability, ...items: T[]): T[] {
+  return isCapabilityEnabled(capability) ? items : []
+}
+
 /** The capabilities whose id is also a Settings section's nav id. Keeping the
  *  two strings identical is what lets one filter drop the sidebar entry, the
  *  pane, and the Cmd+J palette entry — a drift test asserts each id still names
