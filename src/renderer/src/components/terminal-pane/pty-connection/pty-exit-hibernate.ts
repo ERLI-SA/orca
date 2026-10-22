@@ -34,7 +34,9 @@ export function noteArmsHibernatedPaneWake(record: SleepingAgentSessionRecord): 
 
 /** A tab's sole pane keeps a dead terminal it freshly spawned and the user never typed into. */
 function keepsUntouchedFreshPane(session: ConnectPanePtySession, ptyId: string): boolean {
-  return session.spawnedFreshPtyId === ptyId && !Number.isFinite(session.lastTerminalInputAt)
+  // Why the generation check: a late ack for input typed into the previous PTY must not
+  // make this replacement look user-interacted.
+  return session.spawnedFreshPtyId === ptyId && !session.hasTerminalInputForCurrentPty()
 }
 
 /** PTY exit handling, hibernated-pane wake targets, and post-exit focus transfer. */
@@ -304,8 +306,9 @@ export function installPtyExitHibernate(session: ConnectPanePtySession): void {
       return
     }
     session.manager.setPaneGpuRendering(session.pane.id, true)
+    // Why only an untouched fresh spawn: a shell the user typed into that then failed is a
+    // finished session, not a failed startup; retaining it strands a dead pane.
     const failedLocalStartup =
-      !session.connectionId &&
       session.runtimeEnvironmentId === null &&
       exitCode !== 0 &&
       keepsUntouchedFreshPane(session, ptyId)
