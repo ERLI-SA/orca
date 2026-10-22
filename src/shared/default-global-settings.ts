@@ -139,8 +139,10 @@ export function buildDefaultSettings(args: {
     nativeChatInheritShellEnvironment: true,
     nativeChatShellEnvironmentVariables: [],
     nativeChatSessionOptions: {},
-    // The shipped Claude and Codex arguments carry their bypass flags.
-    nativeChatPermissionMode: 'full-access',
+    // The shipped Claude and Codex arguments carry their bypass flags — unless the build
+    // compiled out yolo-default, in which case new chats ask too.
+    nativeChatPermissionMode:
+      DEFAULT_TUI_AGENT_ARGS.claude && DEFAULT_TUI_AGENT_ARGS.codex ? 'full-access' : 'ask',
     openInApplications: [...DEFAULT_OPEN_IN_APPLICATIONS],
     rightSidebarOpenByDefault: true,
     showGitIgnoredFiles: true,
