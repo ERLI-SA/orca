@@ -8,6 +8,7 @@ import type {
   MobilePushRegisterInput,
   MobilePushRegisterResult
 } from '../../../shared/mobile-push-contract'
+import { isCapabilityDisabled } from '../../../shared/disabled-capabilities'
 import { runKeyedSerializedOperation } from '../../cli/keyed-promise-queue'
 import type { DeviceRegistry } from '../device-registry'
 import type { OrcaRuntimeService } from '../orca-runtime'
@@ -73,6 +74,10 @@ export class DesktopPushService {
 
   /** Returns null when the mobile runtime never came up, so there is nothing to push for. */
   static create(options: DesktopPushServiceOptions): DesktopPushService | null {
+    // Why: push.onorca.dev exists only to wake Orca Mobile; a build without mobile has no phone to push to.
+    if (isCapabilityDisabled('mobile')) {
+      return null
+    }
     const keypair = options.runtimeRpc.getE2EEKeypair()
     const registry = options.runtimeRpc.getDeviceRegistry()
     if (!keypair || !registry) {
