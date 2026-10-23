@@ -63,10 +63,11 @@ permissions:
 
 env:
   ORCA_RELEASE_REPO: ${{ github.repository }}
-  # Why the run number: several ERLI builds can come from one upstream tag, and
-  # the updater compares versions rather than tags. This is what makes each one
-  # a distinct, higher version. See ORCA_ERLI_BUILD_NUMBER in the builder config.
-  ORCA_ERLI_BUILD_NUMBER: ${{ github.run_number }}
+  # Why an offset: run_number counts per workflow file, and this file replaced
+  # erli-linux-release.yml, whose last release was build 8. Without it this file's
+  # first builds would be 2.0.1, 2.0.2…, which every installed 2.0.8 treats as a
+  # downgrade and never offers. Never lower it.
+  ERLI_BUILD_NUMBER_OFFSET: '8'
   # Every capability `src/shared/disabled-capabilities.ts` knows how to turn
   # off. These all either reach stablyai-operated services or hand a
   # corporate checkout to one, which a build shipped on company machines has
@@ -80,6 +81,7 @@ jobs:
     timeout-minutes: 10
     outputs:
       upstream: ${{ steps.version.outputs.upstream }}
+      build_number: ${{ steps.version.outputs.build_number }}
       tag: ${{ steps.version.outputs.tag }}
       sha: ${{ steps.version.outputs.sha }}
     steps:
@@ -122,9 +124,15 @@ jobs:
         run: |
           set -euo pipefail
           upstream="$(node -p "require('./package.json').version")"
-          tag="erli-v${upstream}-${GITHUB_RUN_NUMBER}"
+          # Why the build number: several ERLI builds can come from one upstream tag,
+          # and the updater compares versions rather than tags. This is what makes
+          # each one a distinct, higher version. See ORCA_ERLI_BUILD_NUMBER in the
+          # builder config.
+          build=$((GITHUB_RUN_NUMBER + ERLI_BUILD_NUMBER_OFFSET))
+          tag="erli-v${upstream}-${build}"
           sha="$(git rev-parse HEAD)"
           echo "upstream=$upstream" >>"$GITHUB_OUTPUT"
+          echo "build_number=$build" >>"$GITHUB_OUTPUT"
           echo "tag=$tag" >>"$GITHUB_OUTPUT"
           echo "sha=$sha" >>"$GITHUB_OUTPUT"
           echo "Building upstream v$upstream from $sha as $tag"
@@ -149,6 +157,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     env:
+      ORCA_ERLI_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
       # beforePack and afterPack fail the package when the template is absent.
       ORCA_REQUIRE_ORCAD_TEMPLATE: '1'
     steps:
@@ -342,6 +351,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     env:
+      ORCA_ERLI_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
       ORCA_REQUIRE_ORCAD_TEMPLATE: '1'
       NODE_OPTIONS: --max-old-space-size=4096
     steps:
@@ -510,6 +520,7 @@ jobs:
           WINDOWS_VERSION: ${{ needs.build-windows.outputs.version }}
           UPSTREAM: ${{ needs.resolve.outputs.upstream }}
           TARGET: ${{ needs.resolve.outputs.sha }}
+          BUILD: ${{ needs.resolve.outputs.build_number }}
           PRERELEASE: ${{ inputs.prerelease }}
           REPO: ${{ github.repository }}
         run: |
@@ -558,7 +569,7 @@ jobs:
           https://github.com/stablyai/orca/releases.
           EOF
           )"
-          args=(--title "Orca $VERSION (ERLI build ${GITHUB_RUN_NUMBER}, upstream v$UPSTREAM)" --notes "$notes" --target "$TARGET")
+          args=(--title "Orca $VERSION (ERLI build $BUILD, upstream v$UPSTREAM)" --notes "$notes" --target "$TARGET")
           if [ "$PRERELEASE" = "true" ]; then
             args+=(--prerelease)
           else
