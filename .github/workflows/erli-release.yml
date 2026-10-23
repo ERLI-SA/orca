@@ -1,0 +1,570 @@
+# Builds and publishes this fork's Linux x64 .deb and Windows x64 installer as one
+# GitHub release.
+#
+# Why this exists separately from release-cut.yml: the upstream release-cut
+# workflow drives a full three-platform cut with Apple notarization and
+# SignPath approval waits, and publishes into stablyai/orca. Neither the
+# signing credentials nor the target repo apply here, so this fork ships the
+# artifacts it actually needs on demand.
+#
+# Why one release for both platforms: each installed build's updater resolves
+# /releases/latest/download/latest-linux.yml or latest.yml. Two workflows
+# cutting separate releases would leave whichever platform did not cut the
+# latest one pointing at a release without its manifest, so its updates 404.
+# The publish job therefore runs only once both builds succeeded.
+#
+# Why a .deb rather than the AppImage upstream leads with: dpkg pulls the
+# runtime dependencies (python3-gi, at-spi2-core, xdotool, xclip, xvfb) that
+# computer-use and headless `serve` need, and the package's after-install hook
+# sets the setuid bit on chrome-sandbox. An AppImage has neither, so it runs
+# with --no-sandbox on hosts without unprivileged user namespaces.
+#
+# Why the Windows installer is unsigned: ERLI has no Authenticode identity.
+# SmartScreen shows "unknown publisher" on first install, and
+# config/electron-builder.config.cjs drops upstream's SignPath publisherName for
+# ERLI builds, because electron-updater would otherwise reject every later ERLI
+# installer for not being signed by it.
+#
+# Why ORCA_RELEASE_REPO is set for both the app build and the packaging step:
+# the packaged updater resolves its feed from that constant (compiled into the
+# main bundle by electron-vite) and electron-builder writes the matching
+# app-update.yml / latest*.yml from the same value. If only one of the two
+# were set, an installed build would check upstream's releases for updates and
+# try to install upstream binaries over this fork's.
+name: ERLI release
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: >-
+          Branch, tag or SHA to build. Leave empty to build the ref this
+          workflow was launched from, which is almost always what you want —
+          an upstream tag has no ORCA_RELEASE_REPO plumbing and is rejected by
+          the guard below.
+        required: false
+        default: ''
+        type: string
+      prerelease:
+        description: >-
+          Mark the GitHub release as a prerelease. Leave off for builds that
+          should be picked up by the in-app updater — it resolves
+          /releases/latest/download, which skips prereleases.
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: erli-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  ORCA_RELEASE_REPO: ${{ github.repository }}
+  # Why the run number: several ERLI builds can come from one upstream tag, and
+  # the updater compares versions rather than tags. This is what makes each one
+  # a distinct, higher version. See ORCA_ERLI_BUILD_NUMBER in the builder config.
+  ORCA_ERLI_BUILD_NUMBER: ${{ github.run_number }}
+  # Every capability `src/shared/disabled-capabilities.ts` knows how to turn
+  # off. These all either reach stablyai-operated services or hand a
+  # corporate checkout to one, which a build shipped on company machines has
+  # no business doing. An id not listed there fails the build.
+  ORCA_DISABLED_CAPABILITIES: >-
+    artifacts,computer-use,crash-report,feedback,mobile,orca-account,plugins,privacy,servers,share-skills,star-prompt,whats-new,yolo-default
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      upstream: ${{ steps.version.outputs.upstream }}
+      tag: ${{ steps.version.outputs.tag }}
+      sha: ${{ steps.version.outputs.sha }}
+    steps:
+      # Why the `||`: an empty `ref` input must fall through to checkout's own
+      # default (the ref the run was dispatched from), not to an empty string.
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+
+      # Why fail here rather than let the build succeed: without the
+      # ORCA_RELEASE_REPO plumbing the packaged updater keeps upstream's
+      # hard-coded feed, so the package would offer — and install — stablyai
+      # builds over this one. That is invisible until a user's first update.
+      - name: Verify the checked-out tree honours this build's ERLI settings
+        run: |
+          set -euo pipefail
+          missing=0
+          for constant in ORCA_RELEASE_REPO ORCA_DISABLED_CAPABILITIES; do
+            if ! grep -rq "$constant" electron.vite.config.ts config/build-plugins; then
+              echo "::error::This ref predates the $constant plumbing."
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "::error::Build a branch that carries the ERLI build constants, not a bare upstream tag."
+            exit 1
+          fi
+
+      # Why the run number in the tag: package.json carries the upstream version
+      # this fork is synced to, so several fork builds can share it. The `erli-`
+      # prefix keeps these tags out of the way of upstream's `v*` tags, which
+      # land in this repo whenever the fork syncs.
+      #
+      # Why every build job checks out `sha` rather than the input ref: a branch
+      # can move while the jobs queue, and the two platforms must ship one commit.
+      - name: Resolve tag and commit
+        id: version
+        run: |
+          set -euo pipefail
+          upstream="$(node -p "require('./package.json').version")"
+          tag="erli-v${upstream}-${GITHUB_RUN_NUMBER}"
+          sha="$(git rev-parse HEAD)"
+          echo "upstream=$upstream" >>"$GITHUB_OUTPUT"
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+          echo "sha=$sha" >>"$GITHUB_OUTPUT"
+          echo "Building upstream v$upstream from $sha as $tag"
+
+  # Why: upstream deleted the SSH relay (#27215). Every SSH host now runs a
+  # managed orcad deployed from this template, which the desktop package carries;
+  # without it an ERLI build cannot connect to any SSH host. Upstream's own
+  # release-cut builds it the same way.
+  orcad-template:
+    needs: resolve
+    permissions:
+      contents: read
+    uses: ./.github/workflows/node-server-tests.yml
+    with:
+      ref: ${{ needs.resolve.outputs.sha }}
+      build_template: true
+
+  build-linux:
+    needs: [resolve, orcad-template]
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    env:
+      # beforePack and afterPack fail the package when the template is absent.
+      ORCA_REQUIRE_ORCAD_TEMPLATE: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/setup@v2
+        with:
+          install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: package.json
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            mobile/pnpm-lock.yaml
+
+      # Why: pnpm's bundled node-gyp fails the native-module postinstall on
+      # Linux runners. Upstream's release and PR jobs pin an external copy for
+      # the same reason — keep this in step with them.
+      - name: Use external node-gyp to avoid pnpm's bundled copy
+        run: |
+          npm install -g node-gyp@11.5.0
+          echo "npm_config_node_gyp=$(npm root -g)/node-gyp/bin/node-gyp.js" >> "$GITHUB_ENV"
+
+      # Why: `pnpm build:release` verifies the Linux computer-use provider by
+      # importing AT-SPI bindings, which are runtime package deps but are not
+      # present on stock GitHub Ubuntu runners.
+      - name: Install Linux computer-use provider dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential python3 python3-gi gir1.2-atspi-2.0 at-spi2-core xclip xdotool xvfb
+
+      - name: Cache electron-builder downloads
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+          key: electron-builder-linux-x64-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            electron-builder-linux-x64-
+
+      # Why the retry: electron's postinstall downloads the Electron binary from
+      # GitHub release assets, and that CDN intermittently returns 504s.
+      - name: Install dependencies
+        uses: nick-fields/retry@v4
+        with:
+          timeout_minutes: 10
+          max_attempts: 3
+          retry_wait_seconds: 30
+          command: pnpm install --frozen-lockfile
+
+      # Why even with mobile compiled out: build:release builds the mobile web
+      # bundle, which resolves React Native and Expo from mobile/node_modules.
+      - uses: ./.github/actions/install-mobile-dependencies
+
+      # Why read it back from the builder config instead of rebuilding the string:
+      # the config is what stamps the package, so a second copy of the rule could
+      # drift from the artifact it names. It needs node_modules, hence after install.
+      - name: Resolve package version
+        id: version
+        shell: bash
+        run: echo "version=$(node -p "require('./config/electron-builder.config.cjs').extraMetadata.version")" >>"$GITHUB_OUTPUT"
+
+      - name: Build app
+        run: pnpm build:release
+        env:
+          # Why: Vite's web build crosses Node's default old-space ceiling.
+          NODE_OPTIONS: --max-old-space-size=4096
+
+      # After the app build so nothing that cleans out/ can drop it; electron-builder ships it.
+      - name: Download the orcad deployment template
+        uses: actions/download-artifact@v8
+        with:
+          name: orcad-template
+          path: out/orcad-template
+
+      - name: Package deb
+        uses: nick-fields/retry@v4
+        with:
+          timeout_minutes: 30
+          max_attempts: 3
+          retry_wait_seconds: 30
+          command: >-
+            node config/scripts/ensure-native-runtime.mjs --runtime=electron &&
+            pnpm exec electron-builder --config config/electron-builder.config.cjs
+            --linux deb --x64 --publish never
+
+      # Why an explicit check rather than trusting `gh release upload` to fail:
+      # latest-linux.yml is a side effect of having a publish provider
+      # configured, not of the deb target. If a config change ever drops it, the
+      # release would still publish and would silently stop feeding the in-app
+      # updater.
+      - name: Verify release artifacts
+        id: artifacts
+        run: |
+          set -euo pipefail
+          deb="dist/orca-ide_${{ steps.version.outputs.version }}_amd64.deb"
+          missing=0
+          for f in "$deb" dist/latest-linux.yml; do
+            if [ ! -f "$f" ]; then
+              echo "::error::Missing expected artifact: $f"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "dist/ contains:"
+            ls -la dist
+            exit 1
+          fi
+          # Why grep the manifest: the updater resolves the download from it, so
+          # a manifest naming some other artifact feeds installs that 404.
+          grep -q "orca-ide_" dist/latest-linux.yml
+          echo "deb=$deb" >>"$GITHUB_OUTPUT"
+          ls -la "$deb" dist/latest-linux.yml
+
+      # Why inspect rather than install: the runner is throwaway, so a failed
+      # `apt install` would prove little, while the control block and payload are
+      # exactly what a workstation's dpkg will act on. The dependency list is the
+      # whole reason this build ships a package instead of an AppImage — an empty
+      # Depends field would silently give up sandboxing and computer-use.
+      - name: Smoke-test the deb
+        run: |
+          set -euo pipefail
+          deb="${{ steps.artifacts.outputs.deb }}"
+          echo "── control ──"
+          dpkg-deb -I "$deb"
+          echo "── required payload ──"
+          contents="$(dpkg-deb -c "$deb")"
+          for path in ./opt/Orca/orca-ide ./opt/Orca/chrome-sandbox ./opt/Orca/resources/app.asar ./opt/Orca/resources/orcad-template/; do
+            if ! grep -qF " $path" <<<"$contents"; then
+              echo "::error::deb payload is missing $path"
+              exit 1
+            fi
+          done
+          depends="$(dpkg-deb -f "$deb" Depends)"
+          echo "── depends ── $depends"
+          for dep in python3-gi at-spi2-core xdotool xclip xvfb; do
+            if ! grep -q "$dep" <<<"$depends"; then
+              echo "::error::deb does not depend on $dep"
+              exit 1
+            fi
+          done
+          # Why these two: they are what makes the package this fork's rather
+          # than upstream's, and both are generated — a config change could drop
+          # either without failing anything else, and the package would then
+          # update itself from stablyai.
+          workdir="$(mktemp -d)"
+          dpkg-deb -x "$deb" "$workdir"
+          echo "── updater target ──"
+          cat "$workdir/opt/Orca/resources/app-update.yml"
+          if ! grep -q "owner: ${{ github.repository_owner }}" "$workdir/opt/Orca/resources/app-update.yml"; then
+            echo "::error::app-update.yml does not target ${{ github.repository_owner }}"
+            exit 1
+          fi
+          if [ "$(cat "$workdir/opt/Orca/resources/package-type")" != "deb" ]; then
+            echo "::error::package-type marker is not 'deb'; the deb update recovery path stays disarmed"
+            exit 1
+          fi
+          if ! grep -aq "$ORCA_DISABLED_CAPABILITIES" "$workdir/opt/Orca/resources/app.asar"; then
+            echo "::error::the disabled-capability list is not compiled into the packaged asar"
+            exit 1
+          fi
+          rm -rf "$workdir"
+          echo "deb OK"
+
+      - name: Upload Linux release artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: erli-linux
+          path: |
+            ${{ steps.artifacts.outputs.deb }}
+            dist/latest-linux.yml
+          if-no-files-found: error
+          retention-days: 7
+
+  build-windows:
+    needs: [resolve, orcad-template]
+    # Why not windows-latest: it moved to the Windows 2025 / VS 2026 image before
+    # node-gyp could detect VS 18, breaking native dependency install (upstream's
+    # release-cut pins the same image for the same reason).
+    runs-on: windows-2022
+    timeout-minutes: 120
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    env:
+      ORCA_REQUIRE_ORCAD_TEMPLATE: '1'
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/setup@v2
+        with:
+          install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: package.json
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            mobile/pnpm-lock.yaml
+
+      - name: Cache electron-builder downloads
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~\AppData\Local\electron\Cache
+            ~\AppData\Local\electron-builder\Cache
+          key: electron-builder-win-x64-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            electron-builder-win-x64-
+
+      - name: Install dependencies
+        uses: nick-fields/retry@v4
+        with:
+          timeout_minutes: 10
+          max_attempts: 3
+          retry_wait_seconds: 30
+          command: pnpm install --frozen-lockfile
+
+      - uses: ./.github/actions/install-mobile-dependencies
+
+      - name: Resolve package version
+        id: version
+        shell: bash
+        run: echo "version=$(node -p "require('./config/electron-builder.config.cjs').extraMetadata.version")" >>"$GITHUB_OUTPUT"
+
+      # Why: the `orca` CLI launcher (bin/orca.exe) is a native Rust binary that
+      # build:release compiles; the runner image does not guarantee cargo.
+      - name: Ensure the Rust toolchain for the Windows CLI launcher
+        shell: pwsh
+        run: |
+          if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
+            rustup toolchain install stable --profile minimal
+            rustup default stable
+          }
+          cargo --version
+
+      - name: Build app
+        shell: bash
+        run: pnpm build:release
+
+      - name: Download the orcad deployment template
+        uses: actions/download-artifact@v8
+        with:
+          name: orcad-template
+          path: out/orcad-template
+
+      - name: Package Windows installer
+        uses: nick-fields/retry@v4
+        with:
+          timeout_minutes: 30
+          max_attempts: 3
+          retry_wait_seconds: 30
+          command: node config/scripts/ensure-native-runtime.mjs --runtime=electron; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; pnpm exec electron-builder --config config/electron-builder.config.cjs --win --x64 --publish never
+
+      # Why: a Windows terminal is a ConPTY, and these three files are what
+      # node-pty loads for it. A package without them installs and launches but
+      # every terminal fails to spawn.
+      - name: Verify Windows node-pty ConPTY runtime
+        shell: pwsh
+        run: |
+          $runtimeDir = 'dist/win-unpacked/resources/node_modules/node-pty/build/Release'
+          foreach ($file in @("$runtimeDir/conpty.node", "$runtimeDir/conpty/conpty.dll", "$runtimeDir/conpty/OpenConsole.exe")) {
+            if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
+              throw "Missing Windows node-pty runtime file: $file"
+            }
+          }
+
+      # Why each check: the installer and latest.yml are what the updater fetches;
+      # app-update.yml decides which repo it fetches them from and whether it
+      # demands a signature this build cannot have; the capability list is what
+      # keeps this build off stablyai services. All four are generated, so a
+      # config change could drop any one without failing the packaging step.
+      - name: Smoke-test the Windows package
+        shell: bash
+        run: |
+          set -euo pipefail
+          for f in dist/orca-windows-setup.exe dist/orca-windows-setup.exe.blockmap dist/latest.yml \
+            dist/win-unpacked/Orca.exe dist/win-unpacked/resources/app.asar \
+            dist/win-unpacked/resources/bin/orca.exe; do
+            if [ ! -f "$f" ]; then
+              echo "::error::Missing expected artifact: $f"
+              ls -la dist
+              exit 1
+            fi
+          done
+          if [ ! -d dist/win-unpacked/resources/orcad-template ]; then
+            echo "::error::the package does not carry the orcad deployment template; SSH hosts cannot connect"
+            exit 1
+          fi
+          grep -q "orca-windows-setup.exe" dist/latest.yml
+          if ! grep -q "version: ${{ steps.version.outputs.version }}" dist/latest.yml; then
+            echo "::error::latest.yml does not name version ${{ steps.version.outputs.version }}"
+            cat dist/latest.yml
+            exit 1
+          fi
+          update_yml=dist/win-unpacked/resources/app-update.yml
+          echo "── updater target ──"
+          cat "$update_yml"
+          if ! grep -q "owner: ${{ github.repository_owner }}" "$update_yml"; then
+            echo "::error::app-update.yml does not target ${{ github.repository_owner }}"
+            exit 1
+          fi
+          if grep -q "publisherName" "$update_yml"; then
+            echo "::error::app-update.yml demands a signed publisher; this unsigned build would reject its own updates"
+            exit 1
+          fi
+          if ! grep -aq "$ORCA_DISABLED_CAPABILITIES" dist/win-unpacked/resources/app.asar; then
+            echo "::error::the disabled-capability list is not compiled into the packaged asar"
+            exit 1
+          fi
+          echo "Windows package OK"
+
+      - name: Upload Windows release artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: erli-windows
+          path: |
+            dist/orca-windows-setup.exe
+            dist/orca-windows-setup.exe.blockmap
+            dist/latest.yml
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: [resolve, build-linux, build-windows]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: erli-*
+          path: release
+          merge-multiple: true
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+          VERSION: ${{ needs.build-linux.outputs.version }}
+          WINDOWS_VERSION: ${{ needs.build-windows.outputs.version }}
+          UPSTREAM: ${{ needs.resolve.outputs.upstream }}
+          TARGET: ${{ needs.resolve.outputs.sha }}
+          PRERELEASE: ${{ inputs.prerelease }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Why: both platforms check out one sha, so a mismatch means the version
+          # rule depends on the runner, and the two manifests would disagree.
+          if [ "$VERSION" != "$WINDOWS_VERSION" ]; then
+            echo "::error::Linux built $VERSION but Windows built $WINDOWS_VERSION"
+            exit 1
+          fi
+          ls -la release
+          deb_name="orca-ide_${VERSION}_amd64.deb"
+          notes="$(
+            cat <<EOF
+          Unofficial Linux x64 and Windows x64 build of Orca, packaged by ERLI from $TARGET.
+
+          Version \`$VERSION\`, built from upstream tag \`v$UPSTREAM\`. ERLI numbers its builds
+          itself — the \`2.x\` line is the fork's, and the upstream tag it came from is in the
+          suffix — so a fork-only rebuild is still offered as an update even when upstream has
+          not moved. It sorts above any \`1.4.x\` an earlier build carried, so an existing
+          install updates normally.
+
+          ## Install on Linux
+
+          \`\`\`bash
+          curl -L -O https://github.com/$REPO/releases/download/$TAG/$deb_name
+          sudo apt install ./$deb_name
+          \`\`\`
+
+          \`apt\` is what resolves the runtime dependencies; \`sudo dpkg -i\` alone
+          leaves them unmet. Installing puts the app in \`/opt/Orca\`, the
+          \`orca-ide\` CLI on PATH, and sets the setuid bit on Chromium's sandbox
+          helper, so no \`--no-sandbox\` is needed.
+
+          Upgrading over an earlier build keeps \`~/.config/orca\`. Removing the
+          package (\`sudo apt remove orca-ide\`) keeps it too.
+
+          ## Install on Windows
+
+          Download \`orca-windows-setup.exe\` and run it. The installer is **not
+          code-signed**, so Windows SmartScreen reports an unknown publisher on the
+          first run: choose **More info → Run anyway**. Later versions arrive through
+          the in-app updater.
+
+          Not built or signed by stablyai. Notes for the upstream version are at
+          https://github.com/stablyai/orca/releases.
+          EOF
+          )"
+          args=(--title "Orca $VERSION (ERLI build ${GITHUB_RUN_NUMBER}, upstream v$UPSTREAM)" --notes "$notes" --target "$TARGET")
+          if [ "$PRERELEASE" = "true" ]; then
+            args+=(--prerelease)
+          else
+            args+=(--latest)
+          fi
+          gh release create "$TAG" --repo "$REPO" "${args[@]}" \
+            "release/$deb_name" release/latest-linux.yml \
+            release/orca-windows-setup.exe release/orca-windows-setup.exe.blockmap release/latest.yml
+          gh release view "$TAG" --repo "$REPO" --json url --jq .url
