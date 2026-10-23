@@ -70,6 +70,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version-file: package.json
+          check-latest: true
           package-manager-cache: false
       - name: Detect headless-server build and test inputs
         id: scope
