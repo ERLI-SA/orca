@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useState,
   type Dispatch,
   type MutableRefObject,
@@ -9,11 +10,11 @@ import {
 import { toast } from 'sonner'
 import { useMountedRef } from '@/hooks/useMountedRef'
 import { translate } from '@/i18n/i18n'
-import { unwrapRuntimeRpcResult } from '@/runtime/runtime-rpc-client'
+import { unwrapRuntimeRpcResult } from '@/runtime/runtime-rpc-result'
 import { extractRuntimeTransportDiagnostics } from '@/runtime/runtime-status-probe-diagnostics'
 import { useAppStore } from '@/store'
 import {
-  isUserManagedRuntimeEnvironment,
+  isListedRemoteServer,
   type PublicKnownRuntimeEnvironment
 } from '../../../../shared/runtime-environments'
 import type { RuntimeStatus } from '../../../../shared/runtime-types'
@@ -32,7 +33,11 @@ type RuntimeEnvironmentCatalog = {
 }
 
 export function useRuntimeEnvironmentCatalog(): RuntimeEnvironmentCatalog {
-  const [environments, setEnvironments] = useState<PublicKnownRuntimeEnvironment[]>([])
+  const savedEnvironments = useAppStore((state) => state.runtimeEnvironments)
+  const environments = useMemo(
+    () => savedEnvironments.filter(isListedRemoteServer),
+    [savedEnvironments]
+  )
   const [isLoading, setIsLoading] = useState(false)
   const [detailsByEnvironmentId, setDetailsByEnvironmentId] = useState<
     Record<string, RuntimeHostDetails>
@@ -46,18 +51,14 @@ export function useRuntimeEnvironmentCatalog(): RuntimeEnvironmentCatalog {
       }
       try {
         const nextEnvironments = await window.api.runtimeEnvironments.list()
-        const visibleEnvironments = nextEnvironments.filter(isUserManagedRuntimeEnvironment)
+        const visibleEnvironments = nextEnvironments.filter(isListedRemoteServer)
         // Why: drop store status for servers no longer saved so stale hosts don't
         // linger in the sidebar registry.
         useAppStore.getState().setRuntimeEnvironments(nextEnvironments)
         if (verified) {
-          useAppStore.getState().setRuntimeEnvironmentStatus(verified.environmentId, {
-            status: verified.runtimeStatus,
-            checkedAt: Date.now()
-          })
+          await useAppStore.getState().readRuntimeHostStatusSnapshots()
         }
         if (mountedRef.current) {
-          setEnvironments(visibleEnvironments)
           setDetailsByEnvironmentId((current) => {
             const next: Record<string, RuntimeHostDetails> = {}
             for (const environment of visibleEnvironments) {
@@ -93,10 +94,7 @@ export function useRuntimeEnvironmentCatalog(): RuntimeEnvironmentCatalog {
                 const runtimeStatus = unwrapRuntimeRpcResult<RuntimeStatus>(response)
                 // Why: feed the live status into the store so sidebar host pickers
                 // reflect manual refreshes, not just the settings pane.
-                useAppStore.getState().setRuntimeEnvironmentStatus(environment.id, {
-                  status: runtimeStatus,
-                  checkedAt: Date.now()
-                })
+                await useAppStore.getState().readRuntimeHostStatusSnapshots()
                 if (!mountedRef.current) {
                   return
                 }
@@ -114,11 +112,7 @@ export function useRuntimeEnvironmentCatalog(): RuntimeEnvironmentCatalog {
                 // Why: record the failed probe (null status) so the sidebar can
                 // distinguish unreachable from never-checked.
                 const remoteControl = extractRuntimeTransportDiagnostics(error)
-                useAppStore.getState().setRuntimeEnvironmentStatus(environment.id, {
-                  status: null,
-                  ...(remoteControl ? { remoteControl } : {}),
-                  checkedAt: Date.now()
-                })
+                await useAppStore.getState().readRuntimeHostStatusSnapshots()
                 if (!mountedRef.current) {
                   return
                 }

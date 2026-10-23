@@ -16,8 +16,12 @@ import {
   retainLocalWatcherPhysicalFailure,
   trackDetachedLocalUnsubscribe
 } from './filesystem-watcher-listener-lifecycle'
-import { createDebouncedBatch } from './filesystem-watcher-batch-control'
+import { cancelLocalBatchFlush, createDebouncedBatch } from './filesystem-watcher-batch-control'
 import { mapWithConcurrency } from '../../shared/map-with-concurrency'
+import {
+  notifyLocalWatcherEvents,
+  notifyLocalWatcherInterrupted
+} from './local-watcher-event-observers'
 
 // Why: matches the watcher subprocess budget in parcel-watcher-event-delivery.ts.
 const DIRECTORY_STAT_CONCURRENCY = 8
@@ -210,7 +214,8 @@ export function scheduleLocalBatchFlush(root: WatchedRoot): void {
 
   // Trailing-edge debounce: reset timer on each new event
   if (root.batch.timer) {
-    clearTimeout(root.batch.timer)
+    root.batch.timer.refresh()
+    return
   }
   // Why: clear the handle as it fires so `batch.timer` means "a debounce window is still open", which gates the queued drain.
   root.batch.timer = setTimeout(() => {
@@ -244,6 +249,7 @@ export async function createLocalWatcher(
     }
 
     const markWatcherInterrupted = (): void => {
+      notifyLocalWatcherInterrupted(root)
       root.batch.overflowed = true
       scheduleLocalBatchFlush(root)
     }
@@ -255,11 +261,10 @@ export async function createLocalWatcher(
         if (err) {
           // Why: treat watcher errors as overflow so the renderer conservatively refreshes rather than trusting possibly-invalid caches (§7.2, §7.3).
           console.error(`[filesystem-watcher] error for ${rootKey}:`, err)
+          notifyLocalWatcherInterrupted(root)
           emitOverflowPayload(root)
           // Why: after an error the native subscription may be invalid (deleted root); tear down the dead watcher so it doesn't dangle (§7.3).
-          if (root.batch.timer) {
-            clearTimeout(root.batch.timer)
-          }
+          cancelLocalBatchFlush(root)
           // Why: error callback can fire before subscribe() assigns root.subscription; guard against null so cleanup doesn't crash.
           if (root.subscription) {
             retainLocalWatcherPhysicalFailure(rootKey, err)
@@ -273,6 +278,7 @@ export async function createLocalWatcher(
         if (root.batch.cancelled) {
           return
         }
+        notifyLocalWatcherEvents(root, events)
         queueWatcherEvents(root.batch, events)
         scheduleLocalBatchFlush(root)
       },

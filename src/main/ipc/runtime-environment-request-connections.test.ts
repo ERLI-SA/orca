@@ -21,6 +21,7 @@ import {
   sendRemoteRuntimeSharedControlRequest,
   subscribeRemoteRuntimeSharedControlRequest
 } from './runtime-environment-request-connections'
+import { getRemoteRuntimeSharedControlAnsweredAt } from './runtime-environment-shared-control-answers'
 
 const ENVIRONMENT_ID = 'standing-intent-test'
 
@@ -47,9 +48,9 @@ describe('runtime environment shared-control connection cache', () => {
     applyRuntimeEnvironmentCapabilityVerdict({
       evidence: absent,
       verdict: 'absent',
-      runtimeId: 'runtime-test',
-      onAbsent: () => pauseRemoteRuntimeSharedControlRetry(ENVIRONMENT_ID)
+      runtimeId: 'runtime-test'
     })
+    pauseRemoteRuntimeSharedControlRetry(ENVIRONMENT_ID)
     expect(getRemoteRuntimeSharedControlDiagnostics(ENVIRONMENT_ID)?.state).toBe('closed')
     await delay(400)
     expect(server.connectionCount()).toBe(1)
@@ -58,13 +59,30 @@ describe('runtime environment shared-control connection cache', () => {
     applyRuntimeEnvironmentCapabilityVerdict({
       evidence: capable,
       verdict: 'capable',
-      runtimeId: 'runtime-test',
-      onCapable: () => {
-        ensureRemoteRuntimeSharedControlConnection(ENVIRONMENT_ID, server.pairing)
-        reconnectRemoteRuntimeSharedControlConnection(ENVIRONMENT_ID)
-      }
+      runtimeId: 'runtime-test'
     })
+    ensureRemoteRuntimeSharedControlConnection(ENVIRONMENT_ID, server.pairing)
+    reconnectRemoteRuntimeSharedControlConnection(ENVIRONMENT_ID)
     await waitFor(() => server.connectionCount() === 2)
+  })
+
+  it('reports when the ready control socket last heard from its server, never once it drops', async () => {
+    const server = await createSharedControlTestServer()
+    expect(getRemoteRuntimeSharedControlAnsweredAt(ENVIRONMENT_ID)).toBeNull()
+
+    const before = Date.now()
+    await sendRemoteRuntimeSharedControlRequest(
+      ENVIRONMENT_ID,
+      server.pairing,
+      'status.get',
+      undefined,
+      1000
+    )
+    expect(getRemoteRuntimeSharedControlAnsweredAt(ENVIRONMENT_ID)).toBeGreaterThanOrEqual(before)
+
+    server.closeClients()
+    await waitFor(() => getRemoteRuntimeSharedControlDiagnostics(ENVIRONMENT_ID)?.state !== 'ready')
+    expect(getRemoteRuntimeSharedControlAnsweredAt(ENVIRONMENT_ID)).toBeNull()
   })
 
   it('blocks standing creation while manual intent is disconnected', async () => {
@@ -119,9 +137,9 @@ describe('runtime environment shared-control connection cache', () => {
     applyRuntimeEnvironmentCapabilityVerdict({
       evidence,
       verdict: 'absent',
-      runtimeId: 'runtime-test',
-      onAbsent: () => pauseRemoteRuntimeSharedControlRetry(ENVIRONMENT_ID)
+      runtimeId: 'runtime-test'
     })
+    pauseRemoteRuntimeSharedControlRetry(ENVIRONMENT_ID)
 
     expect(getRemoteRuntimeSharedControlDiagnostics(ENVIRONMENT_ID)?.state).toBe('reconnecting')
     await waitFor(() => server.connectionCount() === 2)

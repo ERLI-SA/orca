@@ -20,6 +20,8 @@ export type CreateWebRuntimeSessionTerminalArgs = {
   afterTabId?: string
   targetGroupId?: string
   command?: string
+  /** The Windows shell the terminal runs as, never typed into the host default shell. */
+  shell?: string
   cwd?: string
   env?: Record<string, string>
   envToDelete?: string[]
@@ -28,6 +30,8 @@ export type CreateWebRuntimeSessionTerminalArgs = {
   launchToken?: string
   agent?: TuiAgent
   launchAgent?: TuiAgent
+  /** The command already encodes the complete agent startup and prompt-delivery plan. */
+  preparedAgentCommand?: boolean
   agentSessionKind?: 'fresh' | 'resume'
   prompt?: string
   promptDelivery?: AgentPromptDelivery

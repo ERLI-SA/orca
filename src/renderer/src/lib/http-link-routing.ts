@@ -1,5 +1,5 @@
 import { translate } from '@/i18n/i18n'
-import { FLOATING_TERMINAL_WORKTREE_ID } from '../../../shared/constants'
+import { isFloatingWorkspaceId } from '../../../shared/floating-workspace-worktree'
 import {
   parseLoopbackUrlWithPort,
   type LocalhostWorktreeLabelRoute
@@ -99,7 +99,7 @@ export function registerWorkspaceHttpLinkBrowserOpener(
  * openLinksInAppModifierInverts makes it flip whichever way Link Routing points
  * so the other destination is always one click away.
  */
-export function resolveModifierRouting(
+function resolveModifierRouting(
   modifierHeld: boolean,
   openLinksInApp: boolean,
   modifierInverts: boolean
@@ -127,7 +127,10 @@ export function openHttpLink(url: string, opts: OpenHttpLinkOptions = {}): void 
   }
   const state = storeAccessor?.()
   const remoteRuntimeActive = Boolean(state?.settings?.activeRuntimeEnvironmentId?.trim())
-  const sourceIsLocal = sourceOwner ? sourceOwner.kind === 'local' : !remoteRuntimeActive
+  const effectiveSourceOwner = sourceOwner
+  const sourceIsLocal = effectiveSourceOwner
+    ? effectiveSourceOwner.kind === 'local'
+    : !remoteRuntimeActive
   const openLinksInApp = state?.settings?.openLinksInApp === true
   const modifier = resolveModifierRouting(
     Boolean(modifierHeld),
@@ -144,16 +147,20 @@ export function openHttpLink(url: string, opts: OpenHttpLinkOptions = {}): void 
     wantsOrca &&
     allowRemoteInApp &&
     worktreeId &&
-    (sourceOwner?.kind === 'runtime' || sourceOwner?.kind === 'ssh')
+    (effectiveSourceOwner?.kind === 'runtime' ||
+      effectiveSourceOwner?.kind === 'ssh' ||
+      (!effectiveSourceOwner && remoteRuntimeActive))
   ) {
     if (workspaceHttpLinkBrowserOpener) {
       void workspaceHttpLinkBrowserOpener({
         workspaceId: worktreeId,
         url,
         intent: { kind: 'url' },
-        ...(sourceOwner.kind === 'runtime'
-          ? { expectedRuntimeEnvironmentId: sourceOwner.runtimeEnvironmentId }
-          : { expectedSshConnectionId: sourceOwner.connectionId })
+        ...(effectiveSourceOwner?.kind === 'runtime'
+          ? { expectedRuntimeEnvironmentId: effectiveSourceOwner.runtimeEnvironmentId }
+          : effectiveSourceOwner?.kind === 'ssh'
+            ? { expectedSshConnectionId: effectiveSourceOwner.connectionId }
+            : {})
       }).catch((error) => {
         toast.error(
           error instanceof Error
@@ -170,7 +177,7 @@ export function openHttpLink(url: string, opts: OpenHttpLinkOptions = {}): void 
     // history entry — the user isn't changing worktrees, they're opening a tab
     // in the one they're already in. activateAndRevealWorktree is reserved for
     // file-link jumps that genuinely switch worktrees.
-    if (worktreeId !== FLOATING_TERMINAL_WORKTREE_ID) {
+    if (!isFloatingWorkspaceId(worktreeId)) {
       // Why: the floating workspace uses a synthetic worktree id. Promoting it
       // to the global activeWorktreeId deselects the real repo workspace.
       state.setActiveWorktree(worktreeId)

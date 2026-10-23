@@ -14,10 +14,13 @@
  * - `exited` is a claim about **this endpoint**, not about every relay on the host. It means
  *   nothing holds this socket path, established positively (a connect that was refused *and*
  *   an enumeration that found no holder). A relay whose socket was already unlinked is
- *   invisible to this probe by construction — that is what the superseded sweep is for.
+ *   invisible to this probe by construction.
  * - a probe that could not run, a host without `lsof`, or a connect that failed for any other
- *   reason is `unverifiable`. It never authorizes unlinking, rebinding over, or signalling.
+ *   reason is `unverifiable`. It never authorizes client cleanup.
+ * - a refused socket is `exited` only on a local disk. On a network home another machine's
+ *   kernel may hold it, and this machine's connect and `lsof` cannot see that machine.
  */
+import { RELAY_LSOF_PROBE_JS } from '@orca/process-host/posix-lsof-probe'
 import type { SshConnection } from './ssh-connection'
 import { shellEscape } from './ssh-connection-utils'
 import {
@@ -25,14 +28,14 @@ import {
   RELAY_UNRECOGNIZED_CHILD_COUNT_VAR,
   relayDaemonChildCensusShell
 } from './relay-daemon-service-children'
-import { execCommand, isUnconfirmedSshCommandTermination } from './ssh-relay-deploy-helpers'
+import { execCommand, isUnconfirmedSshCommandTermination } from './ssh-relay-exec-command'
 import { isWindowsRemoteHost, type RemoteHostPlatform } from './ssh-remote-platform'
+import { filesystemTypeIsLocalDisk } from '../orcad/orcad-data-root-locality'
 
-export type RelayEndpointVerdict = 'live' | 'unverifiable' | 'exited'
+type RelayEndpointVerdict = 'live' | 'unverifiable' | 'exited'
 
 export type RelayEndpointEvidence =
   | 'accepted-connection'
-  | 'handshake-refusal'
   | 'holder-process'
   | 'no-holder'
   | 'inconclusive'
@@ -56,9 +59,9 @@ export type RelayEndpointIncumbent = {
   verdict: RelayEndpointVerdict
   evidence: RelayEndpointEvidence
   socketPresent: boolean
-  /** Pids proven to hold this exact socket. Empty when the host could not enumerate them. */
+  /** Pids observed holding this socket, including partial enumeration results. */
   holders: RelayEndpointHolder[]
-  /** False when no enumeration tool was available — an empty `holders` then proves nothing. */
+  /** False when enumeration was incomplete — an empty `holders` then proves nothing. */
   holdersEnumerable: boolean
 }
 
@@ -67,7 +70,7 @@ const PROBE_END = 'ORCA-INCUMBENT-END'
 const CONNECT_PROBE_TIMEOUT_MS = 1000
 
 // Why ES5 syntax: nodePath may be a host-resolved system node, not the bundled one.
-const CONNECT_PROBE_JS = [
+const RELAY_CONNECT_PROBE_JS = [
   'var s=require("net").connect(process.argv[1]);',
   'var done=false;',
   'function say(v){if(done)return;done=true;try{s.destroy()}catch(e){};',
@@ -77,6 +80,26 @@ const CONNECT_PROBE_JS = [
   'say(e.code==="ECONNREFUSED"?"refused":e.code==="ENOENT"?"absent":"unknown")});',
   `setTimeout(function(){say("unknown")},${CONNECT_PROBE_TIMEOUT_MS})`
 ].join('')
+
+// `<platform> <hex f_type of the socket's directory> <hex f_type of />`; old Nodes lack statfsSync.
+const ENDPOINT_FILESYSTEM_PROBE_JS = [
+  'var f=require("fs");',
+  'var a=f.statfsSync(process.argv[1]).type>>>0,b=f.statfsSync("/").type>>>0;',
+  'process.stdout.write(process.platform+" "+a.toString(16)+" "+b.toString(16))'
+].join('')
+
+// `/dev/disk3s5 on /System/Volumes/Data (apfs, local, journaled)` → `apfs`.
+const DARWIN_MOUNT_TYPE_AWK =
+  '{i=index($0," on "mp" (");if(i&&mp!=""){t=substr($0,i+length(mp)+6);sub(/[,)].*/,"",t);print t;exit}}'
+// Only these macOS filesystems live on a disk this machine owns.
+const DARWIN_LOCAL_FILESYSTEM_NAMES = new Set(['apfs', 'hfs'])
+
+export class RelayProbeCleanupUnconfirmedError extends Error {
+  readonly name = 'RelayProbeCleanupUnconfirmedError'
+  constructor() {
+    super('Remote relay probe cleanup is unverifiable; refusing to race a replacement launch')
+  }
+}
 
 /**
  * A POSIX probe that reports only what the host actually observed. Every field has an
@@ -91,18 +114,41 @@ export function relayEndpointIncumbentProbeCommand(nodePath: string, sockPath: s
     `printf '%s\\n' ${shellEscape(PROBE_BEGIN)}`,
     'if [ -S "$sock" ]; then',
     "  printf 'PRESENT=yes\\n'",
-    `  listen=$("$node" -e ${shellEscape(CONNECT_PROBE_JS)} "$sock" 2>/dev/null) || listen=unknown`,
+    `  listen=$("$node" -e ${shellEscape(RELAY_CONNECT_PROBE_JS)} "$sock" 2>/dev/null) || listen=unknown`,
     '  [ -n "$listen" ] || listen=unknown',
     'else',
     "  printf 'PRESENT=no\\n'",
     '  listen=absent',
     'fi',
     'printf \'LISTEN=%s\\n\' "$listen"',
+    'dir=$(dirname "$sock")',
+    `fs_type=$("$node" -e ${shellEscape(ENDPOINT_FILESYSTEM_PROBE_JS)} "$dir" 2>/dev/null) || fs_type=`,
+    'if [ -n "$fs_type" ]; then :',
+    // BSD stat has no filesystem type; macOS names it in `mount` against df's mount point.
+    'elif [ "$(uname -s 2>/dev/null)" = Darwin ]; then',
+    `  mp=$(df -P "$dir" 2>/dev/null | awk 'NR==2{print $NF}')`,
+    `  fs_type="darwin-mount $(mount 2>/dev/null | awk -v mp="$mp" ${shellEscape(DARWIN_MOUNT_TYPE_AWK)})"`,
+    'else',
+    '  fs_type="$(uname -s 2>/dev/null) $(stat -f -c %t "$dir" 2>/dev/null) $(stat -f -c %t / 2>/dev/null)"',
+    'fi',
+    'printf \'FS_TYPE=%s\\n\' "$fs_type"',
     'if command -v lsof >/dev/null 2>&1; then',
-    "  printf 'HOLDERS_SOURCE=lsof\\n'",
-    // Why -a: lsof ORs its selectors, so without it every unix-socket holder on the box
-    // would be reported as holding this path (#8762).
-    '  for pid in $(lsof -t -a -U "$sock" 2>/dev/null); do',
+    // Why -a: lsof ORs selectors without it and reports unrelated unix-socket holders (#8762).
+    `  lsof_result=$("$node" -e ${shellEscape(RELAY_LSOF_PROBE_JS)} "$sock" 2>/dev/null) || lsof_result=unavailable`,
+    '  case "$lsof_result" in',
+    '    cleanup-unconfirmed*)',
+    "      printf 'PROBE_CLEANUP=unconfirmed\\n'",
+    "      printf 'HOLDERS_SOURCE=unavailable\\n'",
+    '      ;;',
+    '    lsof*)',
+    "      printf 'HOLDERS_SOURCE=lsof\\n'",
+    '      ;;',
+    '    *)',
+    "      printf 'HOLDERS_SOURCE=unavailable\\n'",
+    '      ;;',
+    '  esac',
+    "  pids=$(printf '%s\\n' \"$lsof_result\" | sed '1d')",
+    '  for pid in $pids; do',
     '    args=$(ps -o args= -p "$pid" 2>/dev/null | tr "\\n" " ")',
     '    match=no',
     '    case "$args" in *relay.js*"$sock"*) match=yes ;; esac',
@@ -124,6 +170,9 @@ export function parseRelayEndpointIncumbentProbe(
   const lines = output.split('\n').map((line) => line.trim())
   if (!lines.includes(PROBE_BEGIN) || !lines.includes(PROBE_END)) {
     return unverifiableEndpoint(sockPath)
+  }
+  if (lines.includes('PROBE_CLEANUP=unconfirmed')) {
+    throw new RelayProbeCleanupUnconfirmedError()
   }
   const socketPresent = lines.includes('PRESENT=yes')
   const listen = lines.find((line) => line.startsWith('LISTEN='))?.slice('LISTEN='.length) ?? ''
@@ -154,7 +203,11 @@ export function parseRelayEndpointIncumbentProbe(
       holdersEnumerable
     }
   }
-  if (holdersEnumerable && (listen === 'refused' || listen === 'absent')) {
+  const fsType = lines.find((line) => line.startsWith('FS_TYPE='))?.slice('FS_TYPE='.length)
+  if (
+    holdersEnumerable &&
+    (listen === 'absent' || (listen === 'refused' && endpointIsOnLocalDisk(fsType)))
+  ) {
     return {
       sockPath,
       verdict: 'exited',
@@ -165,6 +218,21 @@ export function parseRelayEndpointIncumbentProbe(
     }
   }
   return { ...unverifiableEndpoint(sockPath), socketPresent, holders, holdersEnumerable }
+}
+
+/** Unknown or unreadable types are not local: only a local disk confines a socket to this kernel. */
+function endpointIsOnLocalDisk(fsType: string | undefined): boolean {
+  const [platform, rawType, rawRootType] = (fsType ?? '').trim().split(/\s+/)
+  if (platform === 'darwin-mount') {
+    return DARWIN_LOCAL_FILESYSTEM_NAMES.has(rawType ?? '')
+  }
+  const parseType = (raw: string | undefined): number | null =>
+    raw && /^[0-9a-f]{1,8}$/iu.test(raw) ? Number.parseInt(raw, 16) : null
+  const type = parseType(rawType)
+  return (
+    type !== null &&
+    filesystemTypeIsLocalDisk((platform ?? '').toLowerCase(), type, () => parseType(rawRootType))
+  )
 }
 
 function parseHolder(value: string): RelayEndpointHolder | null {
@@ -219,37 +287,15 @@ export async function probeRelayEndpointIncumbent(
   } catch (err) {
     // An exec whose channel never confirmed close may still be running remotely; the caller
     // must not race a detached launch against it.
-    if (isUnconfirmedSshCommandTermination(err)) {
+    if (
+      err instanceof RelayProbeCleanupUnconfirmedError ||
+      isUnconfirmedSshCommandTermination(err)
+    ) {
       throw err
     }
     // Any other unanswered probe observes nothing. It is never evidence of death.
     return unverifiableEndpoint(sockPath)
   }
-}
-
-/**
- * A relay that told us its version over the wire is `live` by positive host evidence, even on
- * a host where nothing can enumerate socket holders.
- */
-export function withHandshakeRefusalEvidence(
-  incumbent: RelayEndpointIncumbent
-): RelayEndpointIncumbent {
-  if (incumbent.verdict === 'live') {
-    return incumbent
-  }
-  return { ...incumbent, verdict: 'live', evidence: 'handshake-refusal' }
-}
-
-/**
- * May a fresh relay be launched onto this path?
- *
- * Only `live` forbids it. `unverifiable` is permitted because the *daemon* — not the client —
- * performs the takeover: `RelaySocketOwnership.listen` re-probes on EADDRINUSE, refuses to
- * steal a path that accepts connections, and only unlinks an inode whose identity is
- * unchanged. That check is atomic with the bind, which a client-side `rm -f` can never be.
- */
-export function mayLaunchOverRelayEndpoint(incumbent: RelayEndpointIncumbent): boolean {
-  return incumbent.verdict !== 'live'
 }
 
 /**
@@ -270,62 +316,4 @@ export function isReapableRelayHusk(incumbent: RelayEndpointIncumbent): boolean 
   }
   const [holder] = incumbent.holders
   return holder.matchesRelayArgv && holder.unrecognizedChildCount === 0
-}
-
-export function describeRelayEndpointIncumbent(incumbent: RelayEndpointIncumbent): string {
-  const holders = incumbent.holders
-    .map(
-      (holder) =>
-        `${holder.pid}(children=${holder.childCount ?? 'unknown'},` +
-        `unrecognized=${holder.unrecognizedChildCount ?? 'unknown'})`
-    )
-    .join(',')
-  return (
-    `${incumbent.sockPath} verdict=${incumbent.verdict} evidence=${incumbent.evidence} ` +
-    `holders=${incumbent.holdersEnumerable ? holders || 'none' : 'unenumerable'}`
-  )
-}
-
-/**
- * Thrown instead of orphaning: a live relay owns the endpoint and refused us, so the path is
- * not ours to rebind. Terminal for this attempt — the user resolves it with Reset Relay,
- * which signals the incumbent deliberately and with consent.
- */
-export class RelayEndpointHeldError extends Error {
-  readonly name = 'RelayEndpointHeldError'
-  constructor(readonly incumbent: RelayEndpointIncumbent) {
-    super(
-      `A live relay still owns ${incumbent.sockPath} and refused this connection ` +
-        `(${describeRelayEndpointIncumbent(incumbent)}). Orca will not replace it, because ` +
-        'unlinking its socket would strand its terminals. Use Reset Relay for this host to ' +
-        'stop it, then reconnect.'
-    )
-  }
-}
-
-export function isRelayEndpointHeldError(err: unknown): err is RelayEndpointHeldError {
-  return err instanceof RelayEndpointHeldError
-}
-
-/**
- * Thrown when a relay holds the endpoint but never refused us: it accepted a connection or is
- * enumerated as the holder, yet our --connect got no handshake answer. That is a stalled or
- * overloaded relay, not a decision — so unlike `RelayEndpointHeldError` this is retryable, and
- * the session routes it through the relay-lost backoff rather than the terminal error path.
- */
-export class RelayEndpointUnresponsiveError extends Error {
-  readonly name = 'RelayEndpointUnresponsiveError'
-  constructor(readonly incumbent: RelayEndpointIncumbent) {
-    super(
-      `A relay still owns ${incumbent.sockPath} but did not answer the handshake ` +
-        `(${describeRelayEndpointIncumbent(incumbent)}). Orca will retry rather than replace it; ` +
-        'if it never recovers, use Reset Relay for this host.'
-    )
-  }
-}
-
-export function isRelayEndpointUnresponsiveError(
-  err: unknown
-): err is RelayEndpointUnresponsiveError {
-  return err instanceof RelayEndpointUnresponsiveError
 }

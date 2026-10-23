@@ -1,11 +1,30 @@
+import { getDefaultSettings } from '../../../shared/constants'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useAppStore, type AppState } from '@/store'
 import { activateAndRevealWorktree } from './worktree-activation'
 import { waitForWorktreeAgentActivationGateForTests } from './worktree-agent-activation-gate'
-import { makeCreatedAgentWorktree as makeWorktree } from '@/lib/worktree-activation-created-agent-test-state'
+import { makeCreatedAgentWorktree as makeWorktree } from '@/lib/worktree-activation-created-agent.test-fixture'
+import type { RuntimeMobileSessionTabsResult } from '../../../shared/runtime-types'
 
 const initialAppStoreState = useAppStore.getState()
+
+/**
+ * A `session.tabs.list` answer holding no agent-session tab. The gate asks the host for one
+ * workspace's snapshot rather than the whole `session.tabs.listAll` inventory, and refuses an answer
+ * that does not name the scope it listed — so the fake host has to report its worktree.
+ */
+function emptySessionTabsSnapshot(worktreeId: string): RuntimeMobileSessionTabsResult {
+  return {
+    worktree: worktreeId,
+    publicationEpoch: 'epoch-1',
+    snapshotVersion: 1,
+    activeGroupId: null,
+    activeTabId: null,
+    activeTabType: null,
+    tabs: []
+  }
+}
 
 function baseState(worktree: ReturnType<typeof makeWorktree>): Partial<AppState> {
   return {
@@ -40,9 +59,9 @@ function baseState(worktree: ReturnType<typeof makeWorktree>): Partial<AppState>
     agentStatusByPaneKey: {},
     sleepingAgentSessionsByPaneKey: {},
     settings: {
-      agentCmdOverrides: {},
-      setupScriptLaunchMode: 'new-tab'
-    } as unknown as ReturnType<typeof useAppStore.getState>['settings'],
+      ...getDefaultSettings(''),
+      agentCmdOverrides: {}
+    },
     markWorktreeVisited: vi.fn(),
     recordWorktreeVisit: vi.fn(),
     refreshGitHubForWorktreeIfStale: vi.fn(),
@@ -120,7 +139,7 @@ describe('STA-1111 worktree reopen does not fork-bomb tabs', () => {
                     hostScope: { hostIds: ['local'], omittedHostIds: [] }
                   }
                 }
-              : { ok: true, result: { snapshots: [] } }
+              : { ok: true, result: emptySessionTabsSnapshot(worktree.id) }
           )
         },
         pty: {
@@ -161,7 +180,7 @@ describe('STA-1111 worktree reopen does not fork-bomb tabs', () => {
     vi.stubGlobal('window', {
       api: {
         runtime: {
-          call: vi.fn(async () => ({ ok: true, result: { snapshots: [] } }))
+          call: vi.fn(async () => ({ ok: true, result: emptySessionTabsSnapshot(worktree.id) }))
         },
         pty: { listSessions: vi.fn(async () => []) }
       }

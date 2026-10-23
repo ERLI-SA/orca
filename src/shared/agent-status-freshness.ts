@@ -37,16 +37,32 @@ export function isFreshNonDoneAgentStatus(
         | 'evidenceObservedAt'
         | 'mirroredEvidenceReceivedAt'
         | 'restoredUnconfirmed'
+        | 'structuredHostOwned'
       >
     | undefined,
   now = Date.now(),
   staleAfterMs = AGENT_STATUS_STALE_AFTER_MS
 ): boolean {
   // Why: an unconfirmed hydrated row may describe a turn that ended while no receiver was up; never fresh.
-  return Boolean(
-    entry &&
-    entry.state !== 'done' &&
+  return Boolean(entry && entry.state !== 'done' && isAgentStatusFresh(entry, now, staleAfterMs))
+}
+
+/** Child evidence can remain live beneath a parent whose own turn is already done. */
+export function isAgentStatusFresh(
+  entry: Pick<
+    AgentStatusEntry,
+    | 'updatedAt'
+    | 'evidenceObservedAt'
+    | 'mirroredEvidenceReceivedAt'
+    | 'restoredUnconfirmed'
+    | 'structuredHostOwned'
+  >,
+  now = Date.now(),
+  staleAfterMs = AGENT_STATUS_STALE_AFTER_MS
+): boolean {
+  return (
     entry.restoredUnconfirmed !== true &&
-    now - agentStatusEvidenceObservedAt(entry) <= staleAfterMs
+    (entry.structuredHostOwned === true ||
+      now - agentStatusEvidenceObservedAt(entry) <= staleAfterMs)
   )
 }

@@ -4,7 +4,7 @@ import { makePaneKey } from '../../../../shared/stable-pane-id'
 
 vi.mock('sonner', () => ({ toast: { info: vi.fn(), success: vi.fn(), error: vi.fn() } }))
 vi.mock('@/runtime/sync-runtime-graph', () => ({ scheduleRuntimeGraphSync: vi.fn() }))
-vi.mock('@/components/terminal-pane/pty-transport', () => ({
+vi.mock('@/components/terminal-pane/pty-dispatcher', () => ({
   registerEagerPtyBuffer: vi.fn(),
   ensurePtyDispatcher: vi.fn(),
   unregisterPtyDataHandlers: vi.fn()
@@ -140,6 +140,7 @@ describe('terminal tab title batches', () => {
         if (typeof property === 'string' && property.startsWith('wt-')) {
           bucketVisits += 1
         }
+        // oxlint-disable-next-line anti-slop/no-reflect-get -- Proxy `get` trap: only Reflect.get forwards a raw string|symbol key with the proxy receiver.
         return Reflect.get(target, property, receiver)
       }
     })

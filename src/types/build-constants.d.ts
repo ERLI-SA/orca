@@ -33,3 +33,8 @@ declare const ORCA_RELEASE_REPO: string
 // web bundles from ORCA_DISABLED_CAPABILITIES; empty in builds that set nothing,
 // which keeps every capability enabled.
 declare const ORCA_DISABLED_CAPABILITIES: string
+
+// Full commit the build was made from (`git rev-parse HEAD`); official skill installs pin to it.
+declare const ORCA_BUILD_COMMIT: string
+
+// ORCA_LAYOUT_OWNER is declared and read in one place: src/shared/layout-owner-switch.ts.

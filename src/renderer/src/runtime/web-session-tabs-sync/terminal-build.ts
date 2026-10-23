@@ -4,7 +4,7 @@ import { normalizeTerminalLayoutPtyOwnership } from '@/components/terminal-pane/
 import { resolvePaneAgentOwnerRecord } from '../../../../shared/pane-agent-owner'
 import { normalizeCompatibleAgentTitleForOwner } from '../../../../shared/agent-title-owner'
 import { getRemoteRuntimePtyEnvironmentId, toRemoteRuntimePtyId } from '../runtime-terminal-stream'
-import { toWebTerminalSurfaceTabId } from '../web-runtime-session'
+import { toWebTerminalSurfaceTabId } from '../../../../shared/terminal-surface-id'
 import type { MirroredTerminalTab, TerminalSurface, ReadyTerminalSurface } from './state'
 import { chooseRemoteTerminalLayout, isTerminalSurfaceTab } from './terminal-surfaces'
 
@@ -57,6 +57,7 @@ export function buildMirroredTerminalTabs(
   environmentId: string,
   existingById: ReadonlyMap<string, TerminalTab>,
   existingLayoutsByTabId: Readonly<Record<string, TerminalLayoutSnapshot>>,
+  existingLivePtyIdsByTabId: Readonly<Record<string, readonly string[]>>,
   sortOffset: number,
   now: number,
   focusTarget?: { parentTabId: string; leafId: string },
@@ -101,7 +102,14 @@ export function buildMirroredTerminalTabs(
       chooseRemoteTerminalLayout(surfaces, ptyIdsByLeafId, existingLayout, requestedActiveLeafId)
     ).snapshot
     const layoutPtyEntries = Object.entries(layout.ptyIdsByLeafId ?? {})
-    const ptyIds = layoutPtyEntries.map(([, ptyId]) => ptyId)
+    // Wake bindings survive Sleep; only ready surfaces or already-live bindings count as activity.
+    const livePtyIds = new Set([
+      ...Object.values(freshPtyIdsByLeafId),
+      ...(existingLivePtyIdsByTabId[localTabId] ?? [])
+    ])
+    const ptyIds = layoutPtyEntries
+      .map(([, ptyId]) => ptyId)
+      .filter((ptyId) => livePtyIds.has(ptyId))
     let retainedSurfaceByPrunedLeafId: Map<string, TerminalSurface> | undefined
     if (layoutPtyEntries.length < Object.keys(ptyIdsByLeafId).length) {
       const retainedLeafIdByPtyId = new Map(
@@ -171,6 +179,10 @@ export function buildMirroredTerminalTabs(
         // without this dropped the client's agent-prompt label on every snapshot.
         ...(existing?.generatedTitle ? { generatedTitle: existing.generatedTitle } : {}),
         ...(existing?.aiVaultTitle ? { aiVaultTitle: existing.aiVaultTitle } : {}),
+        // Why: the recovery ledger is client-local and the host carries none, so
+        // rebuilding without it would restore this tab's remount allowance on
+        // every snapshot — the counting loop recovery is meant to end (b5cfc6ca).
+        ...(existing?.recovery ? { recovery: existing.recovery } : {}),
         ...(quickCommandLabel ? { quickCommandLabel } : {}),
         ...(startupCwd ? { startupCwd } : {}),
         customTitle: existing?.customTitle ?? null,
