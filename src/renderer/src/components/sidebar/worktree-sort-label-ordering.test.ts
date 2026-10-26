@@ -7,7 +7,7 @@ import {
   compareWorktreeSortLabel,
   getWorktreeSortLabel,
   type SortBy
-} from './smart-sort'
+} from '../../../../shared/sidebar-list/smart-sort'
 import { compareCodePoints, compareSidebarText } from '../../../../shared/sidebar-list/text-order'
 import { getWorktreeHostIdentity } from '../../../../shared/worktree/host-qualified-identity'
 
@@ -61,8 +61,7 @@ const TRICKY_LABELS: readonly (string | null)[] = [
 ]
 
 function makeWorktree(index: number, displayName: string | null): Worktree {
-  // Trailing separators and Windows separators exercise `basename()`'s
-  // normalisation on the rows whose displayName is blank.
+  // Blank names must normalize trailing and Windows path separators consistently.
   const suffixes = ['', '/', '//', '\\']
   return {
     id: `w${index}`,

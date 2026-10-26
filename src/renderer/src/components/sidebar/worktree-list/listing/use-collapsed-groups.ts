@@ -31,7 +31,6 @@ export function useEffectiveCollapsedGroups(args: {
   worktreeLineageById: Record<string, WorktreeLineage>
   prCache: AppState['prCache'] | null
   workspaceStatuses: readonly WorkspaceStatusDefinition[]
-  settings: AppState['settings']
   projectGroups: readonly ProjectGroup[]
   projectGrouping: ProjectGroupingModel
   folderWorkspaces: readonly FolderWorkspace[]
@@ -52,7 +51,6 @@ export function useEffectiveCollapsedGroups(args: {
     worktreeLineageById,
     prCache,
     workspaceStatuses,
-    settings,
     projectGroups,
     projectGrouping,
     folderWorkspaces,
@@ -64,8 +62,7 @@ export function useEffectiveCollapsedGroups(args: {
     }
     const targetWorktree = worktreeMap.get(agentSendTargetWorktreeId)
     if (!targetWorktree) {
-      // Why: folder workspaces are absent from worktreeMap, so without this the
-      // agent-send picker could never open the section hiding one (#15362).
+      // Folder workspaces are absent from worktreeMap but still need picker-driven section reveal.
       const folderKeys = getFolderWorkspaceRevealGroupKeys(
         agentSendTargetWorktreeId,
         folderWorkspaces,
@@ -97,7 +94,6 @@ export function useEffectiveCollapsedGroups(args: {
       pinnedDisplayPolicy,
       prCache,
       workspaceStatuses,
-      settings,
       projectGroups,
       projectGrouping
     })) {
@@ -118,7 +114,6 @@ export function useEffectiveCollapsedGroups(args: {
     projectGroups,
     projectGrouping,
     repoMap,
-    settings,
     workspaceStatuses,
     worktreeLineageById,
     worktreeMap,
