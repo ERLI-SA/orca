@@ -330,8 +330,11 @@ jobs:
             echo "::error::package-type marker is not 'deb'; the deb update recovery path stays disarmed"
             exit 1
           fi
-          if ! grep -aq "$ORCA_DISABLED_CAPABILITIES" "$workdir/opt/Orca/resources/app.asar"; then
-            echo "::error::the disabled-capability list is not compiled into the packaged asar"
+          # Why both places: since 1.4.241 electron-builder unpacks part of out/main next
+          # to the asar, and which chunk lands where varies between builds.
+          if ! grep -aq "$ORCA_DISABLED_CAPABILITIES" "$workdir/opt/Orca/resources/app.asar" &&
+            ! grep -rqF "$ORCA_DISABLED_CAPABILITIES" "$workdir/opt/Orca/resources/app.asar.unpacked/out/main"; then
+            echo "::error::the disabled-capability list is not compiled into the packaged main process"
             exit 1
           fi
           rm -rf "$workdir"
@@ -487,8 +490,10 @@ jobs:
             echo "::error::app-update.yml demands a signed publisher; this unsigned build would reject its own updates"
             exit 1
           fi
-          if ! grep -aq "$ORCA_DISABLED_CAPABILITIES" dist/win-unpacked/resources/app.asar; then
-            echo "::error::the disabled-capability list is not compiled into the packaged asar"
+          # Why both places: part of out/main is unpacked next to the asar since 1.4.241.
+          if ! grep -aq "$ORCA_DISABLED_CAPABILITIES" dist/win-unpacked/resources/app.asar &&
+            ! grep -rqF "$ORCA_DISABLED_CAPABILITIES" dist/win-unpacked/resources/app.asar.unpacked/out/main; then
+            echo "::error::the disabled-capability list is not compiled into the packaged main process"
             exit 1
           fi
           echo "Windows package OK"
