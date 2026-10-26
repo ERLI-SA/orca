@@ -3,8 +3,7 @@ import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'rea
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
 
-// Why a separate file: the sibling suite runs as iOS, where the row has no long press at all.
-// This one runs as Android and pins the wiring from the bubble's long press to the actions sheet.
+// Run the long-press actions-sheet path separately from the iOS inline-selection suite.
 vi.mock('react-native', async () => {
   const React = await import('react')
   const Text = ({ children, ...props }: { children?: ReactNode }): ReactNode =>
@@ -34,13 +33,26 @@ vi.mock('react-native', async () => {
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn() }))
 vi.mock('lucide-react-native', () => ({
   ArrowUp: 'ArrowUp',
+  Bot: 'Bot',
   Brain: 'Brain',
+  Check: 'Check',
   ChevronDown: 'ChevronDown',
+  ChevronRight: 'ChevronRight',
   Copy: 'Copy',
+  Eye: 'Eye',
+  FileMinus2: 'FileMinus2',
+  FilePen: 'FilePen',
+  FilePlus2: 'FilePlus2',
+  Folder: 'Folder',
+  Globe: 'Globe',
+  ListChecks: 'ListChecks',
+  MessageSquareMore: 'MessageSquareMore',
+  Pencil: 'Pencil',
+  Plug: 'Plug',
+  Search: 'Search',
   SquareChevronRight: 'SquareChevronRight',
   SquareTerminal: 'SquareTerminal',
-  Wrench: 'Wrench',
-  ChevronRight: 'ChevronRight'
+  Wrench: 'Wrench'
 }))
 vi.mock('../components/MobileMarkdown', () => ({ MobileMarkdown: 'MobileMarkdown' }))
 vi.mock('./MobileNativeChatMessageActionsSheet', () => ({
@@ -51,7 +63,6 @@ vi.mock('./MobileNativeChatImageViewer', () => ({ MobileNativeChatImageViewer: '
 import { MobileNativeChatMessage } from './MobileNativeChatMessage'
 import { MobileNativeChatRowOverlaysHost } from './MobileNativeChatRowOverlaysHost'
 
-/** Rows inside the chat's overlay host, keyed by id as the list keys them. */
 const inChat = (...rows: NativeChatMessage[]) =>
   createElement(
     MobileNativeChatRowOverlaysHost,
@@ -90,7 +101,6 @@ describe('MobileNativeChatMessage on Android', () => {
 
     const [bubble] = byType('Pressable')
     expect(typeof bubble!.props.onLongPress).toBe('function')
-    // The markdown gets the same handler, so a link span or image under the finger opens the sheet.
     const [markdown] = byType('MobileMarkdown')
     expect(markdown!.props.onLongPress).toBe(bubble!.props.onLongPress)
     expect(markdown!.props.rangeSelectable).toBe(true)
@@ -177,7 +187,6 @@ describe('MobileNativeChatMessage on Android', () => {
       renderer = create(inChat(reasoning))
     })
     const [toggle] = byType('Pressable')
-    // A long press on the headline stays a plain toggle tap.
     expect(toggle!.props.onLongPress).toBeUndefined()
     act(() => toggle!.props.onPress())
 
@@ -194,7 +203,6 @@ describe('MobileNativeChatMessage on Android', () => {
   })
 
   it('keeps the actions sheet open while the transcript row replaces the sent message under it', () => {
-    // A sent message is drawn as its echo until the transcript catches up with a row of its own id.
     const echo: NativeChatMessage = {
       ...message,
       id: 'pending-1',
@@ -220,7 +228,6 @@ describe('MobileNativeChatMessage on Android', () => {
     act(() => {
       renderer = create(inChat({ ...message, id: 'u1', role: 'user' }))
     })
-    // Markdown owns the bubble's text; on Android a long press on a link span opens the sheet.
     const [markdown, ...others] = byType('MobileMarkdown')
     expect(others).toHaveLength(0)
     expect(markdown?.props).toMatchObject({ rangeSelectable: true, tone: 'onBright' })

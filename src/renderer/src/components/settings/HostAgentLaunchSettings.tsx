@@ -4,10 +4,16 @@ import type {
   AgentLaunchSettingsMutation
 } from '../../../../shared/agent-launch-settings'
 import type { AgentPermissionsRenderer } from './AgentLaunchSettingsCatalog'
-import { AgentLaunchSettingsCatalog } from './AgentLaunchSettingsCatalog'
+import {
+  AgentLaunchSettingsCatalog,
+  AgentLaunchSettingsLoading
+} from './AgentLaunchSettingsCatalog'
 import {
   mutateHostAgentLaunchSettings,
   readHostAgentLaunchSettings,
+  hostSupportsAutoPermissions,
+  hostSupportsNativeChatPermissions,
+  hostSupportsOwnChatPermissions,
   type AgentLaunchSettingsOwner
 } from './agent-launch-settings-transport'
 import { Button } from '../ui/button'
@@ -15,7 +21,13 @@ import { translate } from '@/i18n/i18n'
 
 type ReadState =
   | { kind: 'loading' | 'unsupported' | 'failed' }
-  | { kind: 'ready'; settings: AgentLaunchSettings }
+  | {
+      kind: 'ready'
+      settings: AgentLaunchSettings
+      autoSupported: boolean
+      nativeChatPermissionsSupported: boolean
+      chatOwnSupported: boolean
+    }
 
 export function HostAgentLaunchSettings({
   environmentId,
@@ -44,9 +56,25 @@ export function HostAgentLaunchSettings({
     controllerRef.current = controller
     setRead({ kind: 'loading' })
     try {
-      const settings = await readHostAgentLaunchSettings(owner, controller.signal)
+      const [settings, autoSupported, nativeChatPermissionsSupported, chatOwnSupported] =
+        await Promise.all([
+          readHostAgentLaunchSettings(owner, controller.signal),
+          hostSupportsAutoPermissions(owner),
+          hostSupportsNativeChatPermissions(owner),
+          hostSupportsOwnChatPermissions(owner)
+        ])
       if (!controller.signal.aborted) {
-        setRead(settings ? { kind: 'ready', settings } : { kind: 'unsupported' })
+        setRead(
+          settings
+            ? {
+                kind: 'ready',
+                settings,
+                autoSupported,
+                nativeChatPermissionsSupported,
+                chatOwnSupported
+              }
+            : { kind: 'unsupported' }
+        )
       }
     } catch {
       if (!controller.signal.aborted) {
@@ -73,7 +101,13 @@ export function HostAgentLaunchSettings({
         try {
           const settings = await mutateHostAgentLaunchSettings(owner, mutation, controller.signal)
           if (!controller.signal.aborted) {
-            setRead({ kind: 'ready', settings })
+            setRead({
+              kind: 'ready',
+              settings,
+              autoSupported: read.autoSupported,
+              nativeChatPermissionsSupported: read.nativeChatPermissionsSupported,
+              chatOwnSupported: read.chatOwnSupported
+            })
           }
         } catch {
           if (!controller.signal.aborted) {
@@ -85,21 +119,22 @@ export function HostAgentLaunchSettings({
     mutationTail.current = write
     return write
   }
+  if (read.kind === 'loading') {
+    return <AgentLaunchSettingsLoading />
+  }
   if (read.kind !== 'ready') {
     return (
       <div className="space-y-2 text-sm text-muted-foreground">
         <p>
-          {read.kind === 'loading'
-            ? translate('settings.agents.loadingHost', 'Loading agent settings…')
-            : read.kind === 'unsupported'
-              ? translate(
-                  'settings.agents.updateHost',
-                  'Update this server to edit its agent launch settings.'
-                )
-              : translate(
-                  'settings.agents.readFailed',
-                  'Couldn’t read agent settings. Check the host connection and try again.'
-                )}
+          {read.kind === 'unsupported'
+            ? translate(
+                'settings.agents.updateHost',
+                'Update this server to edit its agent launch settings.'
+              )
+            : translate(
+                'settings.agents.readFailed',
+                'Couldn’t read agent settings. Check the host connection and try again.'
+              )}
         </p>
         {read.kind === 'failed' ? (
           <Button type="button" variant="ghost" size="xs" onClick={() => void refresh()}>
@@ -118,6 +153,9 @@ export function HostAgentLaunchSettings({
           detectionTarget={detectionTarget}
           hostName={hostName}
           renderPermissions={renderPermissions}
+          autoSupported={read.autoSupported}
+          nativeChatPermissionsSupported={read.nativeChatPermissionsSupported}
+          chatOwnSupported={read.chatOwnSupported}
           refreshSettings={() => void refresh()}
         />
       </fieldset>

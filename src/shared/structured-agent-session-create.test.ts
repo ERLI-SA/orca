@@ -123,9 +123,7 @@ describe('structured agent session create params', () => {
   })
 
   it('leaves a blank create byte-identical to the pre-resume digest', () => {
-    // Pinned literal: a create with no `resumeFrom` must keep the digest older clients and hosts
-    // already compute, so adding a field to the create fingerprint fails here rather than in the
-    // field on a mixed-version pair.
+    // Pin the legacy no-resume digest; new fields must not break mixed-version create fingerprints.
     expect(createParams().envelope.payloadFingerprint).toBe(
       structuredAgentSessionPayloadFingerprint({
         method: 'agentSession.create',
@@ -163,15 +161,32 @@ describe('the tab id a create reserves', () => {
 })
 
 it('negotiates a strict pane identity and includes it in the create fingerprint without accepting paths', () => {
-  const source = { providerSessionId: 'thread-abc', cliSource: { workspaceId: 'folder', paneKey: 'tab:leaf' } }
+  const source = {
+    providerSessionId: 'thread-abc',
+    cliSource: { workspaceId: 'folder', paneKey: 'tab:leaf' }
+  }
   expect(RUNTIME_CAPABILITIES).toContain(STRUCTURED_AGENT_SESSION_CLI_SOURCE_RUNTIME_CAPABILITY)
   expect(ResumeSource.parse(source)).toEqual(source)
   expect(ResumeSource.safeParse({ ...source, transcriptPath: '/client/path' }).success).toBe(false)
-  expect(ResumeSource.safeParse({ ...source, cliSource: { ...source.cliSource, accountHome: '/client/home' } }).success).toBe(false)
+  expect(
+    ResumeSource.safeParse({
+      ...source,
+      cliSource: { ...source.cliSource, accountHome: '/client/home' }
+    }).success
+  ).toBe(false)
   const first = createParams({ resumeFrom: source })
-  expect(first.envelope.payloadFingerprint).not.toBe(createParams({ resumeFrom: RESUME }).envelope.payloadFingerprint)
-  expect(first.envelope.payloadFingerprint).toBe(createParams({ resumeFrom: source }).envelope.payloadFingerprint)
-  expect(first.envelope.payloadFingerprint).not.toBe(createParams({ resumeFrom: {
-    ...source, cliSource: { ...source.cliSource, paneKey: 'other:leaf' }
-  } }).envelope.payloadFingerprint)
+  expect(first.envelope.payloadFingerprint).not.toBe(
+    createParams({ resumeFrom: RESUME }).envelope.payloadFingerprint
+  )
+  expect(first.envelope.payloadFingerprint).toBe(
+    createParams({ resumeFrom: source }).envelope.payloadFingerprint
+  )
+  expect(first.envelope.payloadFingerprint).not.toBe(
+    createParams({
+      resumeFrom: {
+        ...source,
+        cliSource: { ...source.cliSource, paneKey: 'other:leaf' }
+      }
+    }).envelope.payloadFingerprint
+  )
 })

@@ -1,6 +1,5 @@
 import { useContext } from 'react'
-import { Image, Pressable, Text as NativeText } from 'react-native'
-import { MobileSelectableText as Text } from '../components/MobileSelectableText'
+import { Image, Pressable, Text } from 'react-native'
 import { INLINE_TEXT_SELECTION } from '../components/inline-text-selection'
 import { MobileMarkdown } from '../components/MobileMarkdown'
 import { isImageRefBlock, isTextBlock } from '../../../src/shared/native-chat-types'
@@ -48,7 +47,6 @@ export function Prose({
   onLongPress?: () => void
 }): React.JSX.Element | null {
   if (isTextBlock(block)) {
-    // A host line standing in for a message too large to send, on the person's own row.
     if (isAgentSessionHostStatusPresentation(block.presentation)) {
       return (
         <Text
@@ -93,8 +91,7 @@ export function Prose({
   return null
 }
 
-/** A local preview (composer echo) or real URL draws as a thumbnail that opens full size; a bare
- *  host path (not loadable on the device) falls back to a text placeholder. */
+// Host paths cannot load on the phone; show a placeholder unless a preview or real URL exists.
 function ImageAttachment({
   block,
   fontScale,
@@ -109,9 +106,9 @@ function ImageAttachment({
   const label = block.alt ?? 'Attached image'
   if (!isRenderableImageUri(uri)) {
     return (
-      <NativeText style={[styles.imageRef, { fontSize: TEXT_SIZE * fontScale }]}>
+      <Text style={[styles.imageRef, { fontSize: TEXT_SIZE * fontScale }]}>
         🖼 {block.alt ?? block.path ?? block.url ?? 'image'}
-      </NativeText>
+      </Text>
     )
   }
   return (
