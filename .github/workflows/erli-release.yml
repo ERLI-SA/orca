@@ -141,14 +141,20 @@ jobs:
   # managed orcad deployed from this template, which the desktop package carries;
   # without it an ERLI build cannot connect to any SSH host. Upstream's own
   # release-cut builds it the same way.
+  #
+  # Why fast_runners false: true means Blacksmith runners, which only stablyai's
+  # account has; here those jobs would queue forever. Why actions: read: a job
+  # inside node-server-tests.yml asks for it, and a caller that grants less makes
+  # the whole run fail at startup.
   orcad-template:
     needs: resolve
     permissions:
       contents: read
-    uses: ./.github/workflows/node-server-tests.yml
+      actions: read
+    uses: ./.github/workflows/qualified-orcad-template.yml
     with:
       ref: ${{ needs.resolve.outputs.sha }}
-      build_template: true
+      fast_runners: false
 
   build-linux:
     needs: [resolve, orcad-template]
