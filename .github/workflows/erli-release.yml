@@ -1,5 +1,5 @@
-# Builds and publishes this fork's Linux x64 .deb and Windows x64 installer as one
-# GitHub release.
+# Builds and publishes this fork's Linux x64 .deb, Windows x64 installer and
+# macOS arm64 .dmg/.zip as one GitHub release.
 #
 # Why this exists separately from release-cut.yml: the upstream release-cut
 # workflow drives a full three-platform cut with Apple notarization and
@@ -7,11 +7,11 @@
 # signing credentials nor the target repo apply here, so this fork ships the
 # artifacts it actually needs on demand.
 #
-# Why one release for both platforms: each installed build's updater resolves
-# /releases/latest/download/latest-linux.yml or latest.yml. Two workflows
-# cutting separate releases would leave whichever platform did not cut the
-# latest one pointing at a release without its manifest, so its updates 404.
-# The publish job therefore runs only once both builds succeeded.
+# Why one release for every platform: each installed build's updater resolves
+# /releases/latest/download/latest-linux.yml, latest.yml or latest-mac.yml.
+# Separate workflows cutting separate releases would leave whichever platform did
+# not cut the latest one pointing at a release without its manifest, so its
+# updates 404. The publish job therefore runs only once every build succeeded.
 #
 # Why a .deb rather than the AppImage upstream leads with: dpkg pulls the
 # runtime dependencies (python3-gi, at-spi2-core, xdotool, xclip, xvfb) that
@@ -24,6 +24,15 @@
 # config/electron-builder.config.cjs drops upstream's SignPath publisherName for
 # ERLI builds, because electron-updater would otherwise reject every later ERLI
 # installer for not being signed by it.
+#
+# Why the macOS build signs only when the erli-mac-signing environment has
+# credentials: Squirrel.Mac installs an update only if it satisfies the running
+# app's designated requirement. An ad-hoc signature's requirement is its own
+# cdhash, so an ad-hoc build can be installed by hand but never updates itself;
+# only a Developer ID signature gives every build the same identity. Without the
+# secrets the job still ships an ad-hoc build, so the release is not blocked on
+# the certificate, and the release notes say which kind it is. Why arm64 only:
+# ERLI supports Apple Silicon Macs only, and one slice halves the packaging time.
 #
 # Why ORCA_RELEASE_REPO is set for both the app build and the packaging step:
 # the packaged updater resolves its feed from that constant (compiled into the
@@ -509,8 +518,227 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  build-mac:
+    needs: [resolve, orcad-template]
+    # Why GitHub's macos-15 rather than upstream's Blacksmith mac: see fast_runners
+    # above. It is an arm64 host, so the one slice this job ships is native and
+    # afterPack can boot its terminal host.
+    runs-on: macos-15
+    timeout-minutes: 120
+    # Why an environment: the Developer ID certificate signs as ERLI. Scoping it to
+    # this job keeps it out of the Linux and Windows jobs, and the environment's
+    # branch rule keeps it out of a workflow pushed from any other branch.
+    environment: erli-mac-signing
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      signed: ${{ steps.signing.outputs.signed }}
+    env:
+      ORCA_ERLI_BUILD_NUMBER: ${{ needs.resolve.outputs.build_number }}
+      ORCA_REQUIRE_ORCAD_TEMPLATE: '1'
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          persist-credentials: false
+
+      # Why all-or-nothing: a certificate without notarization credentials would
+      # produce a signed app Gatekeeper still blocks, and a partial set is far more
+      # likely a typo than an intent. Why the key goes to a file: electron-builder
+      # reads APPLE_API_KEY as a path to the .p8, not as its contents.
+      - name: Resolve signing mode
+        id: signing
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          set -euo pipefail
+          names=(CSC_LINK CSC_KEY_PASSWORD APPLE_TEAM_ID APPLE_API_KEY_P8 APPLE_API_KEY_ID APPLE_API_ISSUER)
+          present=()
+          missing=()
+          for name in "${names[@]}"; do
+            if [ -n "${!name}" ]; then present+=("$name"); else missing+=("$name"); fi
+          done
+          if [ "${#present[@]}" -eq 0 ]; then
+            echo "::warning::No macOS signing credentials; shipping an ad-hoc build that cannot update itself."
+            echo "signed=false" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "${#missing[@]}" -ne 0 ]; then
+            echo "::error::erli-mac-signing has only part of the signing credentials; missing: ${missing[*]}"
+            exit 1
+          fi
+          key="$RUNNER_TEMP/apple-api-key.p8"
+          printf '%s\n' "$APPLE_API_KEY_P8" >"$key"
+          echo "APPLE_API_KEY=$key" >>"$GITHUB_ENV"
+          echo "signed=true" >>"$GITHUB_OUTPUT"
+
+      - name: Setup pnpm
+        uses: pnpm/setup@v2
+        with:
+          install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: package.json
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            mobile/pnpm-lock.yaml
+
+      # Why: the terminal host bundles the pinned Node executable, which afterPack
+      # downloads into this cache; upstream's mac release caches it the same way.
+      - name: Locate the pinned Node runtime cache
+        run: echo "ORCA_NODE_RUNTIME_CACHE_DIR=$HOME/Library/Caches/orca-node-runtime" >>"$GITHUB_ENV"
+
+      - name: Cache the pinned Node runtime
+        uses: actions/cache@v5
+        with:
+          path: ~/Library/Caches/orca-node-runtime
+          key: orca-node-runtime-mac-${{ hashFiles('src/shared/node-runtime-pin.ts') }}
+
+      - name: Cache electron-builder downloads
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/Library/Caches/electron
+            ~/Library/Caches/electron-builder
+          key: electron-builder-mac-arm64-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            electron-builder-mac-arm64-
+
+      - name: Install dependencies
+        uses: nick-fields/retry@v4
+        with:
+          timeout_minutes: 10
+          max_attempts: 3
+          retry_wait_seconds: 30
+          command: pnpm install --frozen-lockfile
+
+      - uses: ./.github/actions/install-mobile-dependencies
+
+      - name: Resolve package version
+        id: version
+        run: echo "version=$(node -p "require('./config/electron-builder.config.cjs').extraMetadata.version")" >>"$GITHUB_OUTPUT"
+
+      # Why before the build: plutil accepts duplicate entitlement keys but codesign
+      # rejects them, which would otherwise surface only after a full build.
+      - name: Verify macOS entitlements
+        run: pnpm verify:macos-entitlements
+
+      # build:native compiles the Swift helpers (computer use, keyboard layout,
+      # notification status) that the mac package's extraResources require.
+      - name: Build app
+        run: pnpm build:release
+
+      - name: Download the orcad deployment template
+        uses: actions/download-artifact@v8
+        with:
+          name: orcad-template
+          path: out/orcad-template
+
+      # Why identity "-" when unsigned: with no certificate electron-builder skips
+      # signing, and an arm64 bundle whose Electron signature it has invalidated is
+      # killed at launch. An ad-hoc signature is the minimum that runs.
+      - name: Package macOS app
+        uses: nick-fields/retry@v4
+        env:
+          SIGNED: ${{ steps.signing.outputs.signed }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        with:
+          timeout_minutes: 45
+          max_attempts: 3
+          retry_wait_seconds: 30
+          shell: bash
+          command: |
+            set -euo pipefail
+            node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON config/scripts/pinned-node-downloads.mjs darwin-arm64
+            node config/scripts/ensure-native-runtime.mjs --runtime=electron
+            builder=(pnpm exec electron-builder --config config/electron-builder.config.cjs --mac dmg zip --arm64 --publish never)
+            if [ "$SIGNED" = "true" ]; then
+              ORCA_MAC_RELEASE=1 "${builder[@]}"
+            else
+              unset CSC_LINK CSC_KEY_PASSWORD
+              "${builder[@]}" -c.mac.identity=-
+            fi
+
+      # Why each check: the zip and latest-mac.yml are what Squirrel.Mac fetches,
+      # app-update.yml decides which repo it fetches them from, and the capability
+      # list keeps this build off stablyai services — all generated, so a config
+      # change could drop any of them without failing packaging. A signed build
+      # must also pass Gatekeeper as a downloaded copy would, or it is no better
+      # than the ad-hoc one.
+      - name: Smoke-test the macOS package
+        id: artifacts
+        env:
+          SIGNED: ${{ steps.signing.outputs.signed }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          app=dist/mac-arm64/Orca.app
+          dmg=dist/orca-macos-arm64.dmg
+          zip="$(ls dist/*-arm64-mac.zip 2>/dev/null | head -1 || true)"
+          for f in "$dmg" "$zip" "$zip.blockmap" dist/latest-mac.yml "$app/Contents/Resources/app.asar"; do
+            if [ -z "$f" ] || [ ! -e "$f" ]; then
+              echo "::error::Missing expected artifact: ${f:-the arm64 zip}"
+              ls -la dist
+              exit 1
+            fi
+          done
+          if [ ! -d "$app/Contents/Resources/orcad-template" ]; then
+            echo "::error::the package does not carry the orcad deployment template; SSH hosts cannot connect"
+            exit 1
+          fi
+          if ! grep -qF "$(basename "$zip")" dist/latest-mac.yml || ! grep -q "version: $VERSION" dist/latest-mac.yml; then
+            echo "::error::latest-mac.yml does not name $(basename "$zip") at version $VERSION"
+            cat dist/latest-mac.yml
+            exit 1
+          fi
+          update_yml="$app/Contents/Resources/app-update.yml"
+          echo "── updater target ──"
+          cat "$update_yml"
+          if ! grep -q "owner: ${{ github.repository_owner }}" "$update_yml"; then
+            echo "::error::app-update.yml does not target ${{ github.repository_owner }}"
+            exit 1
+          fi
+          if ! grep -aq "$ORCA_DISABLED_CAPABILITIES" "$app/Contents/Resources/app.asar" &&
+            ! grep -rqF "$ORCA_DISABLED_CAPABILITIES" "$app/Contents/Resources/app.asar.unpacked/out/main"; then
+            echo "::error::the disabled-capability list is not compiled into the packaged main process"
+            exit 1
+          fi
+          codesign --verify --deep --strict --verbose=2 "$app"
+          if [ "$SIGNED" = "true" ]; then
+            spctl --assess --type execute --verbose=4 "$app"
+            xcrun stapler validate "$app"
+          fi
+          echo "zip=$zip" >>"$GITHUB_OUTPUT"
+          echo "macOS package OK (signed: $SIGNED)"
+
+      - name: Upload macOS release artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: erli-mac
+          path: |
+            dist/orca-macos-arm64.dmg
+            dist/orca-macos-arm64.dmg.blockmap
+            ${{ steps.artifacts.outputs.zip }}
+            ${{ steps.artifacts.outputs.zip }}.blockmap
+            dist/latest-mac.yml
+          if-no-files-found: error
+          retention-days: 7
+
   publish:
-    needs: [resolve, build-linux, build-windows]
+    needs: [resolve, build-linux, build-windows, build-mac]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -529,6 +757,8 @@ jobs:
           TAG: ${{ needs.resolve.outputs.tag }}
           VERSION: ${{ needs.build-linux.outputs.version }}
           WINDOWS_VERSION: ${{ needs.build-windows.outputs.version }}
+          MAC_VERSION: ${{ needs.build-mac.outputs.version }}
+          MAC_SIGNED: ${{ needs.build-mac.outputs.signed }}
           UPSTREAM: ${{ needs.resolve.outputs.upstream }}
           TARGET: ${{ needs.resolve.outputs.sha }}
           BUILD: ${{ needs.resolve.outputs.build_number }}
@@ -536,17 +766,31 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          # Why: both platforms check out one sha, so a mismatch means the version
-          # rule depends on the runner, and the two manifests would disagree.
-          if [ "$VERSION" != "$WINDOWS_VERSION" ]; then
-            echo "::error::Linux built $VERSION but Windows built $WINDOWS_VERSION"
+          # Why: every platform checks out one sha, so a mismatch means the version
+          # rule depends on the runner, and the manifests would disagree.
+          if [ "$VERSION" != "$WINDOWS_VERSION" ] || [ "$VERSION" != "$MAC_VERSION" ]; then
+            echo "::error::Linux built $VERSION, Windows $WINDOWS_VERSION, macOS $MAC_VERSION"
             exit 1
           fi
           ls -la release
           deb_name="orca-ide_${VERSION}_amd64.deb"
+          if [ "$MAC_SIGNED" = "true" ]; then
+            mac_notes="The app is signed with ERLI's Developer ID and notarized by Apple, so it
+          opens normally. Later versions arrive through the in-app updater."
+          else
+            mac_notes="The app is **not signed with a Developer ID**, so macOS reports it as damaged.
+          After dragging it to Applications, clear the quarantine flag once:
+
+          \`\`\`bash
+          xattr -dr com.apple.quarantine /Applications/Orca.app
+          \`\`\`
+
+          The in-app updater cannot install updates for this build: download each new
+          version from the releases page and replace the app by hand."
+          fi
           notes="$(
             cat <<EOF
-          Unofficial Linux x64 and Windows x64 build of Orca, packaged by ERLI from $TARGET.
+          Unofficial Linux x64, Windows x64 and macOS arm64 build of Orca, packaged by ERLI from $TARGET.
 
           Version \`$VERSION\`, built from upstream tag \`v$UPSTREAM\`. ERLI numbers its builds
           itself — the \`2.x\` line is the fork's, and the upstream tag it came from is in the
@@ -576,6 +820,11 @@ jobs:
           first run: choose **More info → Run anyway**. Later versions arrive through
           the in-app updater.
 
+          ## Install on macOS (Apple Silicon)
+
+          Download \`orca-macos-arm64.dmg\`, open it and drag Orca to Applications.
+          $mac_notes
+
           Not built or signed by stablyai. Notes for the upstream version are at
           https://github.com/stablyai/orca/releases.
           EOF
@@ -588,5 +837,6 @@ jobs:
           fi
           gh release create "$TAG" --repo "$REPO" "${args[@]}" \
             "release/$deb_name" release/latest-linux.yml \
-            release/orca-windows-setup.exe release/orca-windows-setup.exe.blockmap release/latest.yml
+            release/orca-windows-setup.exe release/orca-windows-setup.exe.blockmap release/latest.yml \
+            release/orca-macos-arm64.dmg* release/*-arm64-mac.zip* release/latest-mac.yml
           gh release view "$TAG" --repo "$REPO" --json url --jq .url
