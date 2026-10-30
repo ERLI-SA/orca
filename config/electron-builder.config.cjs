@@ -263,7 +263,22 @@ const macUsageDescriptions = {
   ...MACOS_FOLDER_USAGE_DESCRIPTIONS
 }
 // Developer ID team that signs every release-channel mac build.
-const ORCA_MAC_TEAM_ID = '6CX3WHS9HZ'
+//
+// Why ERLI names its own: a signed ERLI build carries ERLI's Developer ID, and the
+// terminal-host verification rejects a helper signed by any other team. Falling
+// back to upstream's team would fail every signed ERLI package, so a missing
+// APPLE_TEAM_ID is an error rather than a default.
+function resolveMacTeamId() {
+  if (erliBuildVersion === undefined || !isMacRelease) {
+    return '6CX3WHS9HZ'
+  }
+  const teamId = process.env.APPLE_TEAM_ID?.trim()
+  if (!teamId) {
+    throw new Error('A signed ERLI mac build needs APPLE_TEAM_ID set to ERLI’s Apple team.')
+  }
+  return teamId
+}
+const ORCA_MAC_TEAM_ID = resolveMacTeamId()
 
 /** @type {import('electron-builder').Configuration} */
 module.exports = {
