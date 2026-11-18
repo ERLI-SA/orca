@@ -14,8 +14,8 @@ import {
   ORCAD_RUNTIMES_DIRNAME,
   orcadNodeRuntimeExecutable
 } from '../../../shared/orcad-artifacts'
-import type { OrcadHostTransport } from '../../ssh/orcad-host-transport'
-import { quotePosixShell } from '../../../shared/shell-argument-quoting'
+import type { OrcadHostTransport } from './orcad-host-transport'
+import { quotePosixShell } from '../../../shared/shell/launch/shell-argument-quoting'
 import {
   execCommand,
   isUnconfirmedSshCommandTermination
@@ -28,19 +28,20 @@ import {
   joinRemotePath,
   remoteDirname,
   type RemoteHostPlatform
-} from '../../ssh/ssh-remote-platform'
+} from '../../ssh/remote-host/ssh-remote-platform'
 import { assertPosixOrcadHost } from './orcad-remote-host-support'
 import { withRuntimeStoreLock, type HeldRuntimeStoreLock } from './remote-node-runtime-store-lock'
 import {
   assertRemoteNodeRuntimePromoted,
   assertRemoteNodeRuntimeStoreExecutable,
+  assertWindowsHostCanInstallNodeRuntime,
   REMOTE_NODE_RUNTIME_EXIT_PREFIX,
   REMOTE_NODE_RUNTIME_NOEXEC,
   REMOTE_NODE_RUNTIME_MISSING,
   REMOTE_NODE_RUNTIME_READY,
   REMOTE_NODE_RUNTIME_SELFTEST_FAILED,
   REMOTE_NODE_RUNTIME_VERIFIED_MARKER
-} from '../../ssh/orcad-remote-node-runtime-report'
+} from './orcad-remote-node-runtime-report'
 import {
   windowsNodeRuntimePresentCommand,
   windowsNodeRuntimeProbeCommand,
@@ -225,6 +226,8 @@ export async function ensureRemoteOrcadNodeRuntime(options: {
   archivePath: () => Promise<string>
   /** Name the offline archive location when every download fails. */
   offlineArchivePath?: string
+  /** Per-source connect budget for the host's own download fallback. */
+  hostConnectTimeoutSeconds?: number
   signal?: AbortSignal
   /** Distinguish unconfirmed host round trips from local failures. */
   remoteStep?: RemoteRuntimeStep
@@ -254,6 +257,9 @@ export async function ensureRemoteOrcadNodeRuntime(options: {
   )
   if (probe.trim() === REMOTE_NODE_RUNTIME_READY) {
     return { executable, transfer: 'cached' }
+  }
+  if (windows) {
+    assertWindowsHostCanInstallNodeRuntime(probe)
   }
   const cleanupStage = windows
     ? windowsNodeRuntimeStageCleanupCommand(stageDir)

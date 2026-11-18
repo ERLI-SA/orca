@@ -1,12 +1,13 @@
-import type { WorkspaceKey } from '../../../../shared/folder-workspace-types'
+import { markFullResync } from '@/store/keyed-record-transitions'
 import { FLOATING_TERMINAL_WORKTREE_ID } from '../../../../shared/constants'
 import {
+  type WorkspaceKey,
   folderWorkspaceKey,
-  parseWorkspaceKey,
+  isWorkspaceKey,
   worktreeWorkspaceKey
 } from '../../../../shared/workspace-scope'
-import { buildByIdIndex } from '../slices/worktree-by-id-index'
-import { addAdditionalValidWorkspaceKeys } from '@/lib/workspace-session-hydration-keys'
+import { buildByIdIndex } from '../../../../shared/first-row-by-id-index'
+import { addAdditionalValidWorkspaceKeys } from '@/lib/workspace/persistence/workspace-session-hydration-keys'
 import {
   buildValidWorktreeIdsForSessionHydration,
   collectPersistedWorktreeIdsForSessionHydration
@@ -14,6 +15,7 @@ import {
 import type { TerminalSlice, TerminalStoreGet, TerminalStoreSet } from './terminal-state'
 import { buildRuntimeSessionPlaceholders } from './workspace-terminal-placeholders'
 import {
+  markFullWorkspaceHydration,
   targetScopedWorkspaceHydrationPatch,
   transferNormalizedTerminalLayoutPtyOwnership,
   type TerminalLayoutPtyOwnershipTransfer,
@@ -25,7 +27,7 @@ import { buildWorkspaceTerminalLayoutPlan } from './workspace-terminal-layout-pl
 import { addHydratedSshWorktreePlaceholders } from './workspace-terminal-ssh-placeholders'
 import { retainUnverifiedPtyLossTabIds } from './terminal-unverified-pty-loss'
 import { restoreActiveTabIdByWorktree } from './workspace-terminal-active-tabs'
-import { retainPairedTerminalTabCloseIntentsForCatalog } from '../../runtime/paired-terminal-tab-close-intents'
+import { retainPairedTerminalTabCloseIntentsForCatalog } from '../../runtime/web-session-tabs-sync/closing/paired-terminal-tab-close-intents'
 
 export function createWorkspaceTerminalHydrationActions(
   set: TerminalStoreSet,
@@ -87,14 +89,12 @@ export function createWorkspaceTerminalHydrationActions(
           // An empty workspace is valid; fall back from active repo to avoid a blank landing screen.
           return fallbackActiveWorktreeId
         })()
-        const activeWorkspaceKey: WorkspaceKey | null =
-          session.activeWorkspaceKey && validWorktreeIds.has(session.activeWorkspaceKey)
-            ? session.activeWorkspaceKey
-            : activeWorktreeId
-              ? parseWorkspaceKey(activeWorktreeId)
-                ? (activeWorktreeId as WorkspaceKey)
-                : worktreeWorkspaceKey(activeWorktreeId)
-              : null
+        // Derive from the restored worktree; older builds could persist a key naming another workspace.
+        const activeWorkspaceKey: WorkspaceKey | null = activeWorktreeId
+          ? isWorkspaceKey(activeWorktreeId)
+            ? activeWorktreeId
+            : worktreeWorkspaceKey(activeWorktreeId)
+          : null
         const activeWorkspaceExecutionHostId =
           activeWorkspaceKey && session.activeWorkspaceExecutionHostId
             ? session.activeWorkspaceExecutionHostId
@@ -161,6 +161,9 @@ export function createWorkspaceTerminalHydrationActions(
           ...(options?.contestedPrimaryHostBySessionKey
             ? { contestedPrimaryHostBySessionKey: options.contestedPrimaryHostBySessionKey }
             : {}),
+          ...(options?.hydratedRuntimeSessionHostIds
+            ? { hydratedRuntimeSessionHostIds: options.hydratedRuntimeSessionHostIds }
+            : {}),
           repos: runtimeSessionPlaceholders.repos,
           tabsByWorktree,
           worktreesByRepo,
@@ -196,7 +199,10 @@ export function createWorkspaceTerminalHydrationActions(
           // Why: seed hydrated active worktrees so the first activation has a Back target.
           worktreeNavHistory: activeWorktreeId ? [activeWorktreeId] : [],
           worktreeNavHistoryIndex: activeWorktreeId ? 0 : -1,
-          ptyIdsByTabId: Object.fromEntries(allTabs.map((tab) => [tab.id, []] as const)),
+          ptyIdsByTabId: markFullResync(
+            Object.fromEntries(allTabs.map((tab) => [tab.id, []] as const)),
+            'hydration'
+          ),
           terminalLayoutsByTabId: buildWorkspaceTerminalLayoutPlan({
             ownershipTransfersByTabId,
             ownershipTransferTabIds,
@@ -213,7 +219,7 @@ export function createWorkspaceTerminalHydrationActions(
         }
         return options?.replaceWorkspaceKeys
           ? targetScopedWorkspaceHydrationPatch(s, hydrated, session, options)
-          : hydrated
+          : markFullWorkspaceHydration(hydrated)
       })
       for (const [tabId, transfers] of ownershipTransfersByTabId) {
         transferNormalizedTerminalLayoutPtyOwnership(get(), tabId, transfers)

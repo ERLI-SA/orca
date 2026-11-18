@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import { toast } from 'sonner'
 import { useMountedRef } from '@/hooks/useMountedRef'
-import { useMobilePairingDevicePolling } from '../settings/mobile-pairing-device-polling'
-import type { PairedDevice, StepIndex } from './MobileHero'
+import { useMobilePairingDevicePolling } from './pairing/mobile-pairing-device-polling'
+import type { PairedMobileDevice } from './paired-mobile-devices'
+import type { StepIndex } from './MobileHero'
 import {
   shouldShowPairedAfterDeviceRefresh,
   type MobilePageStage as FlowStage
@@ -21,7 +22,7 @@ export function useMobilePagePairedDevices({
   stepIdx: StepIndex
   setStepIdx: Dispatch<SetStateAction<StepIndex>>
 }): {
-  devices: readonly PairedDevice[]
+  devices: readonly PairedMobileDevice[]
   stage: FlowStage | null
   revokingDeviceIds: readonly string[]
   enterFlow: () => void
@@ -33,6 +34,7 @@ export function useMobilePagePairedDevices({
   // Wait for paired-device status before choosing a stage to avoid flashing the intro for returning users.
   const [stage, setStage] = useState<FlowStage | null>(null)
   const [revokingDeviceIds, setRevokingDeviceIds] = useState<string[]>([])
+  const revokingDeviceIdsRef = useRef(new Set<string>())
   const [deviceCountAtPairStart, setDeviceCountAtPairStart] = useState<number | null>(null)
   const mountedRef = useMountedRef()
   const stageRef = useRef<FlowStage | null>(null)
@@ -73,7 +75,7 @@ export function useMobilePagePairedDevices({
       opts: {
         force?: boolean
       } = {}
-    ): Promise<readonly PairedDevice[]> => {
+    ): Promise<readonly PairedMobileDevice[]> => {
       try {
         const nextDevices = await refreshDevices(opts)
         if (mountedRef.current) {
@@ -116,17 +118,12 @@ export function useMobilePagePairedDevices({
 
   const revokeDevice = useCallback(
     async (deviceId: string) => {
-      let alreadyRevoking = false
-      setRevokingDeviceIds((prev) => {
-        if (prev.includes(deviceId)) {
-          alreadyRevoking = true
-          return prev
-        }
-        return [...prev, deviceId]
-      })
-      if (alreadyRevoking) {
+      // Ref, not a state updater: React may defer the updater past this check.
+      if (revokingDeviceIdsRef.current.has(deviceId)) {
         return
       }
+      revokingDeviceIdsRef.current.add(deviceId)
+      setRevokingDeviceIds((prev) => [...prev, deviceId])
       try {
         const { revoked } = await window.api.mobile.revokeDevice({ deviceId })
         // revoked=false is failure; do not refresh, announce success or route away.
@@ -134,7 +131,7 @@ export function useMobilePagePairedDevices({
           throw new Error('mobile.revokeDevice returned revoked=false')
         }
         // Once revoked, reload failure must still report success; remove from last-known devices rather than treating failed loading as an empty list.
-        let remaining: readonly PairedDevice[]
+        let remaining: readonly PairedMobileDevice[]
         try {
           remaining = await refreshDevices({ force: true })
         } catch (err) {
@@ -155,6 +152,7 @@ export function useMobilePagePairedDevices({
           )
         }
       } finally {
+        revokingDeviceIdsRef.current.delete(deviceId)
         if (mountedRef.current) {
           setRevokingDeviceIds((prev) => prev.filter((id) => id !== deviceId))
         }

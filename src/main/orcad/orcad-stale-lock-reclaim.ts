@@ -1,5 +1,6 @@
 // Shared-home locks need explicit operator confirmation: local silence cannot prove a remote holder exited.
 import { readdirSync, statSync } from 'node:fs'
+import { readdir } from 'node:fs/promises'
 import { createConnection } from 'node:net'
 import { hostname } from 'node:os'
 import { join } from 'node:path'
@@ -13,13 +14,17 @@ import {
 } from './orcad-instance-lock'
 import { readBoundedLockFile } from './orcad-instance-lock-reclaim'
 import { orcadLockHolderLocality } from './orcad-lock-holder-locality'
+import { ORCAD_LOCK_FRESH_MS, orcadLockPeer, orcadLockSelf } from './orcad-lock-clone-machine'
 import { orcadDataRootIsOnLocalDisk } from './orcad-data-root-locality'
 import { readOrcadProcessIncarnation } from './orcad-process-start-time'
-import { hasErrorCode } from '../daemon/daemon-process-inspection'
+import { hasErrorCode } from '../daemon/endpoint/identity/daemon-process-inspection'
 import { resolveUserDataPath } from './orcad-app-paths'
 import { profileStateAccessMachineIdentity } from '../persistence/profile-state/profile-state-access-identity'
-import { readRuntimeMetadata } from '../runtime/runtime-metadata'
-import { RUNTIME_SOCKET_NAME_REGEX } from '../runtime/runtime-rpc/runtime-rpc-socket-metadata'
+import { readRuntimeMetadata } from '../runtime/rpc/server/runtime-metadata'
+import {
+  RUNTIME_SOCKET_NAME_REGEX,
+  runtimeSocketDirs
+} from '../runtime/rpc/server/runtime-rpc-socket-metadata'
 import {
   ORCAD_RECLAIM_STALE_LOCK_FLAG,
   ORCAD_STALE_LOCK_DATA_ROOT_FLAG,
@@ -30,8 +35,8 @@ import {
   type OrcadStaleLockReclaimStatus
 } from '../../shared/orcad-stale-lock-reclaim'
 
-// A holder that just took the lock may not be listening yet; its silence would prove nothing.
-export const ORCAD_STALE_LOCK_MIN_AGE_MS = 2 * 60_000
+// A new holder may not listen yet, and NFS attribute caching can age a live heartbeat this much.
+export const ORCAD_STALE_LOCK_MIN_AGE_MS = ORCAD_LOCK_FRESH_MS
 const ENDPOINT_PROBE_TIMEOUT_MS = 1_500
 
 /** Silent requires OS-confirmed absence of a listener; errors leave ownership unknown. */
@@ -41,6 +46,7 @@ export type OrcadStaleLockReclaimHooks = {
   now?: () => number
   hostname?: () => string
   bootId?: () => string | null
+  bootStartedAtMs?: () => number | null
   machineIdentity?: () => string | null
   dataRootIsOnLocalDisk?: (dataRoot: string) => boolean
   probeEndpoint?: (endpoint: string) => Promise<OrcadEndpointProbe>
@@ -139,8 +145,13 @@ async function checkStaleLock(
   hooks: OrcadStaleLockReclaimHooks
 ): Promise<{ refusal: string } | { evidence: OrcadStaleLockEvidence }> {
   const machineIdentity = (hooks.machineIdentity ?? profileStateAccessMachineIdentity)()
-  const self = { ...(machineIdentity ? { machineIdentity } : {}), ...(bootId ? { bootId } : {}) }
-  const locality = orcadLockHolderLocality(holder, self, () =>
+  // Judge as a normal start does, so "a normal start reclaims it" stays true.
+  const self = orcadLockSelf(
+    { ...(machineIdentity ? { machineIdentity } : {}), ...(bootId ? { bootId } : {}) },
+    (hooks.now ?? Date.now)(),
+    hooks.bootStartedAtMs?.()
+  )
+  const locality = orcadLockHolderLocality(orcadLockPeer(holder, lockPath), self, () =>
     (hooks.dataRootIsOnLocalDisk ?? orcadDataRootIsOnLocalDisk)(dataRoot)
   )
   if (locality === 'local') {
@@ -169,7 +180,7 @@ async function checkStaleLock(
   if (!(now - writtenMs >= ORCAD_STALE_LOCK_MIN_AGE_MS)) {
     return { refusal: `The lock is less than ${ORCAD_STALE_LOCK_MIN_AGE_MS / 60_000} minutes old.` }
   }
-  const endpoints = holderEndpoints(dataRoot, holder.pid)
+  const endpoints = await holderEndpoints(dataRoot, holder.pid)
   if (!endpoints) {
     return { refusal: 'The runtime record in the data root cannot be read.' }
   }
@@ -191,14 +202,14 @@ async function checkStaleLock(
       host: holder.host,
       bootId: holder.bootId,
       currentBootId: bootId,
-      ageMinutes: Math.round((now - Date.parse(holder.acquiredAt)) / 60_000),
+      ageMinutes: Math.round((now - writtenMs) / 60_000),
       nonce: holder.nonce
     }
   }
 }
 
 /** Null leaves endpoints unverifiable when runtime metadata is unreadable. */
-function holderEndpoints(dataRoot: string, pid: number): string[] | null {
+async function holderEndpoints(dataRoot: string, pid: number): Promise<string[] | null> {
   const endpoints = new Set<string>()
   try {
     const metadata = readRuntimeMetadata(dataRoot)
@@ -207,10 +218,12 @@ function holderEndpoints(dataRoot: string, pid: number): string[] | null {
         endpoints.add(transport.endpoint)
       }
     }
-    for (const entry of readdirSync(dataRoot)) {
-      if (RUNTIME_SOCKET_NAME_REGEX.exec(entry)?.[1] === String(pid)) {
-        endpoints.add(join(dataRoot, entry))
-      }
+    for (const dir of runtimeSocketDirs(dataRoot)) {
+      // A long data root relocates the holder's socket; it only listens in a dir this user can read.
+      const entries = dir === dataRoot ? readdirSync(dir) : await readdir(dir).catch(() => [])
+      entries
+        .filter((entry) => RUNTIME_SOCKET_NAME_REGEX.exec(entry)?.[1] === String(pid))
+        .forEach((entry) => endpoints.add(join(dir, entry)))
     }
   } catch {
     return null

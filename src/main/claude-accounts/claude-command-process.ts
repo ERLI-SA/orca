@@ -5,11 +5,17 @@ import {
   type WindowsHostInteractiveLoginSpawn
 } from '../../shared/windows-interactive-login-spawn'
 import { buildWslExecArgs, buildWslLoginShellCommand } from '../../shared/wsl-login-shell-command'
-import { quotePosixShell } from '../../shared/shell-argument-quoting'
+import { quotePosixShell } from '../../shared/shell/launch/shell-argument-quoting'
 import { resolveClaudeCommand } from '../codex-cli/command'
-import { resolveWslExecutablePath } from '../wsl/wsl-executable-path'
+import {
+  isSpawnEnoent,
+  isWindowsOnlyAgentCommand,
+  windowsOnlyCliMessage
+} from '../codex-cli/windows-only-agent-cli'
+import { resolveWslExecutablePath } from '../wsl/execution/wsl-executable-path'
 import { buildWindowsCommandInvocation } from './windows-command-invocation'
 import { terminateClaudeProcess } from './claude-login-process-termination'
+import { stripInheritedClaudeSessionEnv } from '../../shared/agent-launch/startup/claude-parent-session-env'
 
 const MAX_COMMAND_OUTPUT_CHARS = 4_000
 const CLAUDE_AUTH_DENIED_PATTERN =
@@ -46,7 +52,17 @@ export function runClaudeCommandProcess(
       args[1] === 'login'
     // WSL launches never need the host binary, so resolve it lazily.
     let cachedHostClaudeCommand: string | null = null
-    const hostClaudeCommand = (): string => (cachedHostClaudeCommand ??= resolveClaudeCommand())
+    const hostClaudeCommand = (): string => {
+      if (cachedHostClaudeCommand) {
+        return cachedHostClaudeCommand
+      }
+      const resolved = resolveClaudeCommand()
+      // A Windows-only result is never kept, so a later WSL install is found by the next resolve.
+      if (!isWindowsOnlyAgentCommand(resolved)) {
+        cachedHostClaudeCommand = resolved
+      }
+      return resolved
+    }
     // The visible-console wrapper relays the login PID so termination reaches it.
     const interactiveLogin = isWindowsHostInteractiveLogin
       ? buildWindowsHostInteractiveLoginSpawn(hostClaudeCommand(), args)
@@ -143,7 +159,10 @@ export function runClaudeCommandProcess(
     }
     const onError = (error: Error): void => {
       if (!terminationPending) {
-        settle(() => rejectPromise(error))
+        const windowsOnly = isSpawnEnoent(error)
+          ? windowsOnlyCliMessage(spawnConfig.command, 'Claude')
+          : null
+        settle(() => rejectPromise(windowsOnly ? new Error(windowsOnly) : error))
       }
     }
     const onDone = (code: number | null): void => {
@@ -230,12 +249,14 @@ function resolveClaudeInvocation(
   hostClaudeCommand: () => string,
   browser: string | undefined
 ): ClaudeSpawnConfig {
+  const inheritedEnv = { ...process.env }
+  stripInheritedClaudeSessionEnv(inheritedEnv)
   const spawnConfig = interactiveLogin
     ? {
         command: interactiveLogin.command,
         args: interactiveLogin.args,
         env: withCliRuntimeOnPath(hostClaudeCommand(), {
-          ...process.env,
+          ...inheritedEnv,
           ...claudeConfigDirEnv(configDir.windowsPath, browser)
         }),
         windowsVerbatimArguments: false
@@ -249,14 +270,14 @@ function resolveClaudeInvocation(
             '-c',
             buildWslLoginShellCommand(wslClaudeCommand(configDir.linuxPath, args, browser))
           ]),
-          env: process.env,
+          env: inheritedEnv,
           windowsVerbatimArguments: false
         }
       : process.platform === 'win32'
         ? {
             ...buildWindowsCommandInvocation(hostClaudeCommand(), args),
             env: withCliRuntimeOnPath(hostClaudeCommand(), {
-              ...process.env,
+              ...inheritedEnv,
               ...claudeConfigDirEnv(configDir.windowsPath, browser)
             })
           }
@@ -264,7 +285,7 @@ function resolveClaudeInvocation(
             command: hostClaudeCommand(),
             args,
             env: withCliRuntimeOnPath(hostClaudeCommand(), {
-              ...process.env,
+              ...inheritedEnv,
               ...claudeConfigDirEnv(configDir.windowsPath, browser)
             }),
             windowsVerbatimArguments: false

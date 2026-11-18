@@ -1,11 +1,11 @@
-import { z } from 'zod'
+import * as z from 'zod'
 import { sha256 } from '../sha256'
 
 /** A reader that sees another value must reject rather than guess at the shape. */
 export const MOBILE_WEB_BUNDLE_SCHEMA_VERSION = 1 as const
 
-/** Page build number: shells require their minimum and wall older desktops. Bump when a shell stops handling an older page. */
-export const MOBILE_WEB_PAGE_VERSION = 1
+/** Page build number: shells require their minimum and wall older desktops, and check it before using a newer page feature. 2: opens a shell's `open` target in-document. 3: also hands an `open` for the session on top its pane, and reports which session it shows. */
+export const MOBILE_WEB_PAGE_VERSION = 3
 
 /** The only stable-named asset, and the only one that references the content-addressed names. */
 export const MOBILE_WEB_BUNDLE_ENTRYPOINT = 'index.html'
@@ -16,6 +16,8 @@ export const MOBILE_WEB_BUNDLE_MAX_TOTAL_BYTES = 32 * 1024 * 1024
 export const MOBILE_WEB_BUNDLE_MAX_ASSET_BYTES = 10 * 1024 * 1024
 export const MOBILE_WEB_BUNDLE_MAX_ROUTES = 64
 export const MOBILE_WEB_BUNDLE_MAX_ROUTE_GRANTS = 16
+// What a route's two lists can grant together; released shells cap each list alone, never the pair.
+export const MOBILE_WEB_BUNDLE_MAX_GRANTED_ROUTE_GRANTS = 2 * MOBILE_WEB_BUNDLE_MAX_ROUTE_GRANTS
 
 export const SHA256_PATTERN = /^[a-f0-9]{64}$/
 const ASSET_PATH_PATTERN = /^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$/
@@ -63,11 +65,24 @@ export const MobileWebBundleAssetSchema = z
     path: MobileWebBundleAssetPathSchema,
     sha256: z.string().regex(SHA256_PATTERN),
     byteLength: z.number().int().nonnegative().max(MOBILE_WEB_BUNDLE_MAX_ASSET_BYTES),
-    contentType: z.string().min(1).max(MAX_CONTENT_TYPE_LENGTH).regex(CONTENT_TYPE_PATTERN)
+    contentType: z.string().min(1).max(MAX_CONTENT_TYPE_LENGTH).regex(CONTENT_TYPE_PATTERN),
+    /** Length of the brotli copy at `mobileWebBundleBrotliPath(path)`, present only where it is smaller.
+     *  Outside buildId, so phones keep caching and reusing by the raw bytes. */
+    brotliByteLength: z
+      .number()
+      .int()
+      .nonnegative()
+      .max(MOBILE_WEB_BUNDLE_MAX_ASSET_BYTES)
+      .optional()
   })
   .strict()
 
 export type MobileWebBundleAsset = z.infer<typeof MobileWebBundleAssetSchema>
+
+/** The build writes each brotli copy next to its asset under this name. */
+export function mobileWebBundleBrotliPath(assetPath: string): string {
+  return `${assetPath}.br`
+}
 
 /** Code-unit order, not `localeCompare`: the sort feeds a content hash, so it must not vary. */
 function compareAssetPaths(left: MobileWebBundleAsset, right: MobileWebBundleAsset): number {
@@ -108,22 +123,11 @@ export const MobileWebBundleRouteSchema = z
       .max(MOBILE_WEB_BUNDLE_MAX_ROUTE_GRANTS)
       .optional(),
     /** The page can draw the wide host area, sidebar included, when `init` says it owns it. */
-    canOwnHostArea: z.literal(true).optional()
+    canOwnHostArea: z.literal(true).optional(),
+    /** This page also renders the narrow host area; legacy ownership remains wide-only. */
+    canOwnHostAreaAcrossLayouts: z.literal(true).optional()
   })
   .strict()
-  // Cap the combined session grant set as well as each input array; separate caps would allow twice the limit.
-  .superRefine((route, context) => {
-    if (
-      route.grants.length + (route.optionalGrants?.length ?? 0) >
-      MOBILE_WEB_BUNDLE_MAX_ROUTE_GRANTS
-    ) {
-      context.addIssue({
-        code: 'custom',
-        path: ['optionalGrants'],
-        message: 'grants and optionalGrants together must not exceed the route grant ceiling'
-      })
-    }
-  })
 
 export type MobileWebBundleRoute = z.infer<typeof MobileWebBundleRouteSchema>
 
