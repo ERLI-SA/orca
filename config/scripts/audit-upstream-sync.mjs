@@ -64,6 +64,7 @@ export const FORK_OWNED_PATHS = [
   'src/renderer/src/components/terminal-pane/pty-connection/lifecycle/active-pane-pty-binding.ts',
   'src/renderer/src/components/terminal-pane/pty-connection/lifecycle/pane-pty-exit.ts',
   'src/renderer/src/hooks/useSettingsNavigationMetadata.ts',
+  'src/shared/agent-launch/choices/agent-launch-profile.ts',
   'src/shared/agent-launch/choices/tui-agent-launch-defaults.ts',
   'src/shared/artifacts/artifact-sharing-gate.ts',
   'src/shared/default-global-settings.ts',

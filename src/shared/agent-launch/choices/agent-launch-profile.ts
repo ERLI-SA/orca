@@ -13,6 +13,7 @@ import {
 } from '../../agent-session/options/agent-session-option-launch'
 import type { AgentLaunchProfileSettings } from './tui-agent-launch-defaults'
 import { YOLO_TUI_AGENT_ARGS } from '../permissions/tui-agent-permissions'
+import { isCapabilityEnabled } from '../../disabled-capabilities'
 import {
   hasTypedAgentPermission,
   resolveAgentPermission
@@ -47,7 +48,11 @@ export function projectAgentLaunchProfile(
   const userArgs =
     input.userArgs ??
     settings?.agentDefaultArgs?.[agent] ??
-    (typed || input.choices?.permissionMode !== undefined ? '' : (YOLO_TUI_AGENT_ARGS[agent] ?? ''))
+    // Why gated (ERLI): this untyped-profile fallback is a default bypass flag, which a
+    // build without yolo-default must not hand to an agent nobody configured.
+    (typed || input.choices?.permissionMode !== undefined || !isCapabilityEnabled('yolo-default')
+      ? ''
+      : (YOLO_TUI_AGENT_ARGS[agent] ?? ''))
   const choices = resolveAgentChoiceLayers({
     agent,
     defaults: {
