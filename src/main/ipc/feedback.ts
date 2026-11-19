@@ -1,4 +1,5 @@
 import os from 'node:os'
+import { isCapabilityEnabled } from '../../shared/disabled-capabilities'
 import { app, ipcMain } from 'electron'
 import { readFeedbackImagesDelivered, validateFeedbackImages } from './feedback-image-attachments'
 import type {
@@ -169,7 +170,7 @@ async function submitFeedbackWithDiagnosticBundle(
     }
     const failure = responseFailure(response)
     if (bodyWithoutDiagnosticBundle && shouldRetryWithoutDiagnosticBundle(response.status)) {
-      return submitFeedbackWithoutDiagnosticBundle(bodyWithoutDiagnosticBundle, failure)
+      return await submitFeedbackWithoutDiagnosticBundle(bodyWithoutDiagnosticBundle, failure)
     }
     return { ok: false, ...failure }
   } catch (error) {
@@ -212,7 +213,7 @@ export async function submitFeedback(
     }
     // Retry the owning endpoint; api.onorca.dev serves a different product.
     if (res.status >= 500) {
-      return retryFeedbackOnPrimary(body, new Error(`status ${res.status}`))
+      return await retryFeedbackOnPrimary(body, new Error(`status ${res.status}`))
     }
     return { ok: false, status: res.status, error: `status ${res.status}` }
   } catch (error) {
@@ -221,6 +222,12 @@ export async function submitFeedback(
 }
 
 export function registerFeedbackHandlers(): void {
+  // Why the channel is left unregistered rather than made to refuse: it posts
+  // repository context to www.onorca.dev, and an unhandled channel rejects any
+  // caller that reaches past the hidden menu entry. (ERLI fork)
+  if (!isCapabilityEnabled('feedback')) {
+    return
+  }
   ipcMain.removeHandler('feedback:submit')
   ipcMain.handle('feedback:submit', (_event, args: FeedbackSubmitArgs) => {
     // Validate before typed-array normalization can expand hostile renderer input.

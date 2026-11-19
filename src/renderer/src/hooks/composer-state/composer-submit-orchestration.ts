@@ -66,6 +66,7 @@ export function useComposerSubmitOrchestration(
     pushTarget: target.workspaceIdentityState.pushTarget
   })
   const quickSubmitPreparation = useQuickSubmitPreparation({
+    branchIntent: target.workspaceIdentityState.branchIntent,
     branchAutoNameRef: target.asyncComposerState.branchAutoNameRef,
     branchNameOverridePreservesNameEdits:
       target.workspaceIdentityState.branchNameOverridePreservesNameEdits,
@@ -83,7 +84,7 @@ export function useComposerSubmitOrchestration(
     selectedRepoExecutionHostId: target.runtimeTargetSelection.selectedRepoExecutionHostId,
     selectedRepoHookContextKey: target.runtimeTargetSelection.selectedRepoHookContextKey,
     selectedRepoIsGit: target.runtimeTargetSelection.selectedRepoIsGit,
-    setAdvancedOpen: target.asyncComposerState.setAdvancedOpen,
+    revealSetupChoice: target.asyncComposerState.revealSetupChoice,
     settings: target.composerTargetStore.settings,
     setupConfig: target.derivedComposerState.setupConfig,
     setupDecision: target.asyncComposerState.setupDecision,
@@ -137,7 +138,9 @@ export function useComposerSubmitOrchestration(
       external.githubSubmitResolution.resolvePendingSmartGitHubSubmit,
     selectedRepo: target.runtimeTargetSelection.selectedRepo,
     selectedRepoRequiresConnection: target.runtimeTargetSelection.selectedRepoRequiresConnection,
+    selectedTargetNeedsVisibleHost: target.runtimeTargetSelection.selectedTargetNeedsVisibleHost,
     selectedWorkspaceTarget: target.runtimeTargetSelection.selectedWorkspaceTarget,
+    revealSetupChoice: target.asyncComposerState.revealSetupChoice,
     setCreateError: target.asyncComposerState.setCreateError,
     setCreating: target.asyncComposerState.setCreating,
     setupDecision: target.asyncComposerState.setupDecision,

@@ -7,7 +7,7 @@ import {
 
 // Why re-exported: upstream's config sits exactly at max-lines, so the fork's import
 // takes the place of this one instead of adding a line.
-export { resolveBuildSourceCommit } from '../scripts/build-source-commit.mjs'
+export { resolveBuildSourceCommit } from '../scripts/build-identity/build-source-commit.mjs'
 
 // Why compile-time and not an env read at runtime: the updater feed must be
 // fixed to whichever repo actually published the binary. A fork that ships its

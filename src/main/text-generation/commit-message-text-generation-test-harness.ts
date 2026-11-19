@@ -1,22 +1,56 @@
-import { EventEmitter } from 'node:events'
+import { ChildProcess } from 'node:child_process'
+import { PassThrough } from 'node:stream'
+import { isProviderRecord } from '../provider-process/provider-json-record'
 import { expect, vi } from 'vitest'
 
-export type MockDiscoveryChild = EventEmitter & {
+export type MockDiscoveryChild = ChildProcess & {
   pid: number
-  kill: ReturnType<typeof vi.fn>
-  stdout: EventEmitter
-  stderr: EventEmitter
-  stdin: { end: ReturnType<typeof vi.fn> }
+  kill: ReturnType<typeof vi.fn<() => boolean>>
+  stdout: PassThrough
+  stderr: PassThrough
+  stdin: PassThrough & { end: ReturnType<typeof vi.fn> }
 }
 
 export function createMockDiscoveryChild(): MockDiscoveryChild {
-  const child = new EventEmitter() as MockDiscoveryChild
-  child.pid = 123
-  child.kill = vi.fn()
-  child.stdout = new EventEmitter()
-  child.stderr = new EventEmitter()
-  child.stdin = { end: vi.fn() }
-  return child
+  const child = new ChildProcess()
+  Object.defineProperties(child, {
+    stdout: { writable: true, configurable: true, enumerable: true },
+    stderr: { writable: true, configurable: true, enumerable: true },
+    stdin: { writable: true, configurable: true, enumerable: true }
+  })
+  return Object.assign(child, {
+    pid: 123,
+    kill: vi.fn(() => true),
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    stdin: Object.assign(new PassThrough(), { end: vi.fn() })
+  })
+}
+
+/** Answers initialize, then each `model/list` with the next page (`{ rpcError }` replies an error), as a Codex app-server child. */
+export function answerCodexAppServer(
+  child: { stdin: NodeJS.EventEmitter; stdout: NodeJS.EventEmitter },
+  pages: unknown[]
+): void {
+  let page = 0
+  child.stdin.on('data', (chunk: Buffer) => {
+    for (const line of chunk.toString('utf8').split('\n').filter(Boolean)) {
+      const message: unknown = JSON.parse(line)
+      if (isProviderRecord(message) && typeof message.id === 'number') {
+        const answer = message.method === 'model/list' ? pages[page++] : {}
+        const error = isProviderRecord(answer) ? answer.rpcError : undefined
+        const reply = Buffer.from(
+          `${JSON.stringify(error ? { id: message.id, error } : { id: message.id, result: answer })}\n`
+        )
+        // Real streams may be piped onward by the spawner; plain emitters only have listeners.
+        if (child.stdout instanceof PassThrough) {
+          child.stdout.write(reply)
+        } else {
+          child.stdout.emit('data', reply)
+        }
+      }
+    }
+  })
 }
 
 export function withPlatform<T>(platform: NodeJS.Platform, fn: () => T): T {

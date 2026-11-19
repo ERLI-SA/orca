@@ -1,14 +1,16 @@
 import {
   AGENT_MODEL_MAX_LENGTH,
+  normalizeOptionalField
+} from '../../agent-status/contracts/agent-status-field-normalization'
+import {
   normalizeAgentStatusPayload,
   type ParsedAgentStatusPayload
-} from '../../agent-status-types'
-import { normalizeOptionalField } from '../../agent-status-field-normalization'
-import { isAskUserQuestionTool } from '../../agent-question-answered-intent'
+} from '../../agent-status/contracts/agent-status-types'
+
 import {
   mainAgentTurnInterrupted,
   type AgentLeadStatusResolution
-} from '../../agent-lead-status-fold'
+} from '../../agent-status/lifecycle/agent-lead-status-fold'
 import {
   codexRosterToSnapshots,
   enrichCodexSubagentIdentity,
@@ -29,6 +31,7 @@ import { resolvePrompt, resolveToolState } from '../prompt-fields'
 import { extractToolFields, isNewTurnEvent } from '../provider-event-routing'
 import { readString } from '../tool-input-preview'
 import {
+  codexHookEventState,
   codexMainAgentStatusForPayload,
   codexLeadOutcomeForEvent,
   getOrCreateCodexSubagentRoster,
@@ -37,7 +40,7 @@ import {
   resolveCodexPaneStatus,
   setCodexMainAgentTurnState
 } from './codex-state'
-import { isForeignEphemeralCodexThread } from './codex-ephemeral-threads'
+import { pendingCodexAsyncQuestion, trackCodexAsyncQuestions } from './codex-async-questions'
 
 export function buildCodexStatusPayload(
   state: HookListenerState,
@@ -53,6 +56,11 @@ export function buildCodexStatusPayload(
       })
     : (state.lastToolByPaneKey.get(paneKey) ?? {})
   const lead = state.codexLeadStateByPaneKey.get(paneKey)
+  // An approval or blocking question on screen wins; otherwise a waiting row shows the open async question.
+  const asyncQuestion =
+    options.stateName === 'waiting' && !snapshot.interactivePrompt
+      ? pendingCodexAsyncQuestion(state, paneKey)
+      : undefined
 
   return normalizeAgentStatusPayload({
     state: options.stateName,
@@ -62,9 +70,9 @@ export function buildCodexStatusPayload(
     }),
     agentType: 'codex',
     model: lead?.model,
-    toolName: snapshot.toolName,
+    toolName: asyncQuestion?.toolName ?? snapshot.toolName,
     toolInput: snapshot.toolInput,
-    interactivePrompt: snapshot.interactivePrompt,
+    interactivePrompt: asyncQuestion?.prompt ?? snapshot.interactivePrompt,
     lastAssistantMessage: snapshot.lastAssistantMessage,
     lastAssistantMessageIsToolOutput: snapshot.lastAssistantMessageIsToolOutput,
     interrupted: mainAgentTurnInterrupted(lead),
@@ -161,26 +169,10 @@ export function normalizeCodexEvent(
     return normalizeCodexSubagentLifecycleEvent(state, eventName, paneKey, hookPayload)
   }
 
-  // Ephemeral side chats share the pane but must not replace its recorded main turn.
-  if (isForeignEphemeralCodexThread(state, paneKey, eventName, hookPayload)) {
-    return null
-  }
-
-  // Auto-allowed request_user_input still blocks on PreToolUse (Codex0.145+).
-  const isUserInputPreTool =
-    eventName === 'PreToolUse' &&
-    isAskUserQuestionTool(readString(hookPayload, 'tool_name') ?? readString(hookPayload, 'name'))
-  const stateName =
-    eventName === 'SessionStart' ||
-    eventName === 'UserPromptSubmit' ||
-    (eventName === 'PreToolUse' && !isUserInputPreTool) ||
-    eventName === 'PostToolUse'
-      ? 'working'
-      : eventName === 'PermissionRequest' || isUserInputPreTool
-        ? 'waiting'
-        : eventName === 'Stop' || eventName === 'Interrupt'
-          ? 'done'
-          : null
+  const stateName = codexHookEventState(
+    eventName,
+    readString(hookPayload, 'tool_name') ?? readString(hookPayload, 'name')
+  )
   if (!stateName) {
     return null
   }
@@ -256,6 +248,11 @@ export function normalizeCodexEvent(
     transcriptPath,
     stateName
   )
+  // An open async question needs the user even while Codex keeps working.
+  const leadState =
+    trackCodexAsyncQuestions(state, paneKey, eventName, hookPayload) && ownedState === 'working'
+      ? 'waiting'
+      : ownedState
   const previousLead = state.codexLeadStateByPaneKey.get(paneKey)
   const transcript = state.codexSubagentTranscriptByPaneKey.get(paneKey)
   const turnId = readString(hookPayload, 'turn_id')
@@ -274,10 +271,10 @@ export function normalizeCodexEvent(
         !previousLead?.turnId ||
         codexTranscriptTurnEnd(transcript, previousLead.turnId) !== undefined))
   const record = setCodexMainAgentTurnState(state, paneKey, {
-    state: ownedState,
+    state: leadState,
     ...(failedTurn
       ? { outcome: 'failure' as const }
-      : codexLeadOutcomeForEvent(eventName, previousLead, ownedState)),
+      : codexLeadOutcomeForEvent(eventName, previousLead, leadState)),
     model:
       normalizeOptionalField(hookPayload['model'], AGENT_MODEL_MAX_LENGTH) ??
       (eventName === 'SessionStart' ? undefined : previousLead?.model),
