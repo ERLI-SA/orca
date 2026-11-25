@@ -59,14 +59,14 @@ export function initializePanePtyExit(session: ConnectPanePtySession): void {
 function keepsUntouchedFreshPane(
   session: ConnectPanePtySession,
   ptyId: string,
-  inputAttempted: boolean
+  inputAttempted: () => boolean
 ): boolean {
   // Why the attempt as well as the ack: a write still awaiting acknowledgement when the
   // shell exits (Ctrl+C racing its ack) was typed by the user; retaining that dead pane
   // strands it. ERLI fork: fix(terminal): tear down failed local exits after input.
   return (
     session.spawnedFreshPtyId === ptyId &&
-    !inputAttempted &&
+    !inputAttempted() &&
     !Number.isFinite(session.lastTerminalInputAt)
   )
 }
@@ -206,7 +206,7 @@ export function bindPanePtyExit(session: ConnectPanePtySession): void {
     const panes = session.manager.getPanes()
     if (panes.length <= 1) {
       // Keep sole fresh, never-typed shell failures visible for diagnostics instead of closing the tab and deactivating the workspace; explicit exit and dead reattach still close.
-      if (keepsUntouchedFreshPane(session, ptyId, processExitState.inputAttempt.attempted)) {
+      if (keepsUntouchedFreshPane(session, ptyId, () => processExitState.inputAttempt.attempted)) {
         return
       }
       session.deps.onPtyExitRef.current(ptyId, exitCode)
