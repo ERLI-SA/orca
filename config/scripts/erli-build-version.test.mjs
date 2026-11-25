@@ -1,6 +1,9 @@
 import { execFileSync } from 'node:child_process'
 import { describe, expect, it } from 'vitest'
-import { compareAppVersions, isValidAppVersion } from '../../src/shared/app-version'
+import {
+  compareAppVersions,
+  isValidAppVersion
+} from '../../src/shared/app-lifecycle/identity/app-version'
 
 // Why this file exists: the fork publishes several builds from one upstream tag,
 // so the version is what makes a rebuild installable. Two comparators decide
@@ -35,7 +38,7 @@ function dpkgGreater(left, right) {
 
 describe('ERLI build version', () => {
   it("is the fork's own 2.0.x line, carrying the upstream tag it was built from", () => {
-    expect(erliVersion(7)).toBe('2.0.7-erli-upstream.1.4.256')
+    expect(erliVersion(7)).toBe('2.0.7-erli-upstream.1.4.264')
   })
 
   // Why this one matters most: earlier builds shipped upstream's version verbatim,
