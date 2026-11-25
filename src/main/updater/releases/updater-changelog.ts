@@ -1,5 +1,5 @@
 import { net } from 'electron'
-import type { ChangelogData } from '../../../shared/update-status-types'
+import type { ChangelogData } from '../../../shared/updater/update-status-types'
 import { isCapabilityDisabled } from '../../../shared/disabled-capabilities'
 import { compareVersions } from './updater-fallback'
 
@@ -11,7 +11,7 @@ type ChangelogEntry = {
   releaseNotesUrl: string
 }
 
-const CHANGELOG_URL = 'https://onorca.dev/changelog'
+const CHANGELOG_URL = 'https://orca.dev/changelog'
 
 function isValidEntry(entry: ChangelogEntry): boolean {
   return (
@@ -35,7 +35,7 @@ export async function fetchChangelog(
   if (isCapabilityDisabled('whats-new')) {
     return null
   }
-  const res = await net.fetch('https://onorca.dev/whats-new/changelog.json', {
+  const res = await net.fetch('https://orca.dev/whats-new/changelog.json', {
     signal: AbortSignal.timeout(5000)
   })
   if (!res.ok) {

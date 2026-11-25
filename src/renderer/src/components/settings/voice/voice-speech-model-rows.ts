@@ -1,9 +1,9 @@
-import type { SpeechModelManifest, SpeechModelState } from '../../../../../shared/speech-types'
-import { isOfferedSpeechModel } from '../../../../../shared/speech-model-retirement'
-import {
-  speechModelQuality,
-  type SpeechModelQuality
-} from '../../../../../shared/speech-model-quality'
+import type {
+  SpeechModelManifest,
+  SpeechModelState
+} from '../../../../../shared/speech/speech-types'
+import { isOfferedSpeechModel } from '../../../../../shared/speech/models/speech-model-retirement'
+import { speechModelQuality, type SpeechModelQuality } from './speech-model-quality'
 
 export type VoiceSpeechModelTab = 'local' | 'cloud'
 
@@ -12,6 +12,11 @@ export type VoiceSpeechModelRowData = {
   state: SpeechModelState | undefined
   /** null for a retired model, which is only listed so its files can be deleted. */
   quality: SpeechModelQuality | null
+}
+
+/** True while a model's files are being fetched or unpacked. */
+export function isSpeechModelDownloading(state: SpeechModelState | undefined): boolean {
+  return state?.status === 'downloading' || state?.status === 'extracting'
 }
 
 export function speechModelTab(manifest: SpeechModelManifest): VoiceSpeechModelTab {

@@ -1,10 +1,10 @@
-import { LOCAL_EXECUTION_HOST_ID } from '../../../../../shared/execution-host'
+import { LOCAL_EXECUTION_HOST_ID } from '../../../../../shared/execution-host/execution-host'
 import React from 'react'
 import { ChevronDown, Code2, ExternalLink, FileText, FolderOpen, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
-import { FLOATING_TERMINAL_WORKTREE_ID } from '../../../../../shared/constants'
+import { FLOATING_TERMINAL_WORKTREE_ID } from '../../../../../shared/workspace/identity/floating-workspace-id'
 import { useAppStore } from '../../../store/index'
-import { revealFloatingWorkspacePanel } from '../../../lib/floating-workspace-panel-reveal'
+import { revealFloatingWorkspacePanel } from '../../floating-terminal/workspace/floating-workspace-panel-reveal'
 import { detectLanguage } from '../../../../../shared/editor-language/editor-language-detect'
 import { Button } from '../../ui/button'
 import {
@@ -15,6 +15,7 @@ import {
   DropdownMenuTrigger
 } from '../../ui/dropdown-menu'
 import { useTranslate } from '@/i18n/use-translate'
+import { floatingWorkspaceUnavailableReason } from '@/components/floating-terminal/workspace/floating-workspace-availability'
 
 function openFailureMessage(reason: string): string {
   switch (reason) {
@@ -69,6 +70,12 @@ export function KeybindingsFileActions(): React.JSX.Element {
   }
 
   const editKeybindingsInOrca = async (): Promise<void> => {
+    // The editor opens in the floating workspace, which a browser tab cannot host.
+    const unavailable = floatingWorkspaceUnavailableReason()
+    if (unavailable) {
+      toast.info(unavailable)
+      return
+    }
     try {
       const filePath = await prepareKeybindingsPath()
       if (!filePath) {

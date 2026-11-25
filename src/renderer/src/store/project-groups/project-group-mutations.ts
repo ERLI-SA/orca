@@ -1,11 +1,10 @@
 import { initializeNewRootProjectGroupOrder } from './project-group-update-persistence'
 import type { StateCreator } from 'zustand'
 import type { AppState } from '../types'
-import type { ProjectGroup } from '../../../../shared/project-group-types'
-import type { Repo } from '../../../../shared/repo-types'
+import type { ProjectGroup } from '../../../../shared/project/groups/project-group-types'
+import type { Repo } from '../../../../shared/repository/repo-types'
 import { selectProjectGroupRemovalTargets } from './project-group-removal-targets'
 import {
-  getProjectGroupHostId,
   isProjectGroupJoinableFromCatalog,
   projectGroupMatchesOwnerHost,
   resolveProjectGroupOwnerHostId,
@@ -18,7 +17,7 @@ import {
 } from '../repos/repo-host-identity'
 import { callRuntimeRpc } from '../../runtime/rpc/calls/runtime-rpc-call'
 import { ipcOrRuntimeTargetForHostId } from '../../runtime/rpc/targets/runtime-client-target'
-import { getRepoExecutionHostId } from '../../../../shared/execution-host'
+import { getRepoExecutionHostId } from '../../../../shared/execution-host/execution-host'
 import type { ProjectRemovalFailure, RepoSlice } from '../repos/repo-state'
 import { mergeProjectCompatibilityForHostRepoChange } from '../repos/repo-catalog-identity'
 import { applyProjectGroupDeleteCascade } from './project-group-removal-state'
@@ -73,7 +72,7 @@ export function createProjectGroupMutationActions(
               ).group
         const orderedGroup = await initializeNewRootProjectGroupOrder(target, group, get())
         const ownedGroup = adoptFromEndpoint(target, { kind: 'projectGroup', row: orderedGroup })
-        const ownerHostId = getProjectGroupHostId(ownedGroup)
+        const ownerHostId = getRepoExecutionHostId(ownedGroup)
         set((s) => {
           const existing = s.projectGroups.find((entry) =>
             projectGroupMatchesOwnerHost(entry, ownedGroup.id, ownerHostId)

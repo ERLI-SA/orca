@@ -1,7 +1,11 @@
 import * as z from 'zod'
-import type { RuntimeSpeechModelSummary } from '../../../src/shared/runtime-worktree-contracts'
-import { hostUnionArms, salvagedOptional, salvagingArray } from '../../../src/shared/zod-salvage'
-import { normalizeDictationTerms } from '../../../src/shared/dictation-dictionary'
+import type { RuntimeSpeechModelSummary } from '../../../src/shared/worktree/catalog/runtime-worktree-contracts'
+import {
+  hostUnionArms,
+  salvagedOptional,
+  salvagingArray
+} from '../../../src/shared/validation/zod-salvage'
+import { normalizeDictationTerms } from '../../../src/shared/speech/dictation/dictation-dictionary'
 
 export const SPEECH_MODEL_PROVIDERS = hostUnionArms<RuntimeSpeechModelSummary['provider']>({
   local: true,
@@ -37,6 +41,8 @@ export const dictationSetupSchema = z.looseObject({
   dictationHoldToRecord: salvagedOptional('dictationHoldToRecord', z.boolean()),
   // Absent from older hosts, which remove no fillers either; the phone then keeps them on, the host default.
   removeFillerWords: salvagedOptional('removeFillerWords', z.boolean()),
+  // Absent from older hosts, which stop after a minute; the shared reader maps absent and unknown to that.
+  stopAfterSilenceSeconds: salvagedOptional('stopAfterSilenceSeconds', z.number().nullable()),
   // Absent from older hosts, which spell nothing; malformed entries are dropped.
   dictationTerms: salvagedOptional(
     'dictationTerms',

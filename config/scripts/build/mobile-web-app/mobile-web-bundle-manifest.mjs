@@ -70,7 +70,11 @@ export function hashedAsset(bytes, extension) {
   }
 }
 
-function readIntegerConstant(source, name, file = 'src/shared/protocol-version.ts') {
+function readIntegerConstant(
+  source,
+  name,
+  file = 'src/shared/remote-runtime/protocol/protocol-version.ts'
+) {
   const match = new RegExp(`export const ${name} = (\\d+)`).exec(source)
   if (!match) {
     throw new Error(`[mobile-web-bundle-manifest] ${name} not found in ${file}`)
@@ -80,7 +84,10 @@ function readIntegerConstant(source, name, file = 'src/shared/protocol-version.t
 
 // Parse TS protocol source: packaging runs bare Node before build outputs exist.
 export async function readProtocolWindow() {
-  const source = await readFile(join(projectDir, 'src', 'shared', 'protocol-version.ts'), 'utf8')
+  const source = await readFile(
+    join(projectDir, 'src', 'shared', 'remote-runtime', 'protocol', 'protocol-version.ts'),
+    'utf8'
+  )
   return {
     runtimeProtocolVersion: readIntegerConstant(source, 'RUNTIME_PROTOCOL_VERSION'),
     minCompatibleRuntimeProtocolVersion: readIntegerConstant(
@@ -133,6 +140,8 @@ async function compressWithBrotli(written) {
 export async function writeMobileWebBundleTree({
   outDir,
   written,
+  // Host-only JSON outside `assets` and buildId, served one at a time over RPC.
+  catalogs = [],
   desktopVersion,
   protocolWindow,
   // Empty route list makes shell render every screen natively.
@@ -143,14 +152,15 @@ export async function writeMobileWebBundleTree({
 }) {
   const brotliCopies = brotli ? await compressWithBrotli(written) : new Map()
   const assets = written
-    .map(({ path, sha256, byteLength, contentType }) => {
+    .map(({ path, sha256, byteLength, contentType, kind }) => {
       const copy = brotliCopies.get(path)
       return {
         path,
         sha256,
         byteLength,
         contentType,
-        ...(copy === undefined ? {} : { brotliByteLength: copy.byteLength })
+        ...(copy === undefined ? {} : { brotliByteLength: copy.byteLength }),
+        ...(kind === undefined ? {} : { kind })
       }
     })
     .sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0))
@@ -164,14 +174,27 @@ export async function writeMobileWebBundleTree({
     entrypoint: MOBILE_WEB_BUNDLE_ENTRYPOINT,
     totalBytes: assets.reduce((total, asset) => total + asset.byteLength, 0),
     assets,
-    routes
+    routes,
+    ...(catalogs.length === 0
+      ? {}
+      : {
+          catalogs: catalogs.map(({ locale, path, sha256, byteLength }) => ({
+            locale,
+            path,
+            sha256,
+            byteLength
+          }))
+        })
   }
 
   // Clear entire output or stale unreferenced assets ship inside asar.
   await rm(outDir, { recursive: true, force: true })
   await mkdir(join(outDir, 'assets'), { recursive: true })
-  for (const asset of written) {
-    await writeFile(join(outDir, asset.path), asset.bytes)
+  if (catalogs.length > 0) {
+    await mkdir(join(outDir, 'catalogs'), { recursive: true })
+  }
+  for (const file of [...written, ...catalogs]) {
+    await writeFile(join(outDir, file.path), file.bytes)
   }
   for (const [path, copy] of brotliCopies) {
     await writeFile(join(outDir, mobileWebBundleBrotliPath(path)), copy)

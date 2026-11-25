@@ -14,7 +14,7 @@ describe('yolo-default capability', () => {
     vi.resetModules()
     vi.stubGlobal('ORCA_DISABLED_CAPABILITIES', disabled)
     const launch = await import('./tui-agent-launch-defaults.js')
-    const { getDefaultSettings } = await import('../../constants.js')
+    const { getDefaultSettings } = await import('../../orca-profiles/constants.js')
     return { ...launch, newProfile: getDefaultSettings('/home/user') }
   }
 

@@ -83,6 +83,14 @@ export function ifCapabilityEnabled<T>(capability: DisableableCapability, ...ite
   return isCapabilityEnabled(capability) ? items : []
 }
 
+/** Throws when the capability is compiled out — gates a network call with one statement, for
+ *  upstream files at their max-lines budget whose callers already handle a failed fetch. */
+export function assertCapabilityEnabled(capability: DisableableCapability): void {
+  if (isCapabilityDisabled(capability)) {
+    throw new Error(`${capability} is not available in this build.`)
+  }
+}
+
 /** The capabilities whose id is also a Settings section's nav id. Keeping the
  *  two strings identical is what lets one filter drop the sidebar entry, the
  *  pane, and the Cmd+J palette entry — a drift test asserts each id still names

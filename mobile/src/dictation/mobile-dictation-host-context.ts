@@ -3,7 +3,8 @@ import type { UseMobileDictationResult } from '../hooks/mobile-dictation-session
 import type { RpcClient } from '../transport/rpc/rpc-client-contract'
 import type { MobileDictationAwayTarget } from './mobile-dictation-away-insert'
 import type { MobileDictationLiveText } from './use-mobile-dictation-announcements'
-import type { DictationTerm } from '../../../src/shared/dictation-dictionary'
+import type { DictationTerm } from '../../../src/shared/speech/dictation/dictation-dictionary'
+import type { StopAfterSilenceSeconds } from '../../../src/shared/speech/dictation/dictation-silence-stop'
 
 export type MobileDictationHostToast = { message: string; open?: () => void }
 
@@ -21,6 +22,7 @@ export type MobileDictationOwner = {
   // The target tab's pane key, for a screen still in the stack to switch back to it.
   readonly paneKey: string | undefined
   readonly dictationMode: string | undefined
+  readonly silenceSeconds: StopAfterSilenceSeconds
   readonly removeFillerWords: boolean
   // The computer's terms for this worktree, for words the phone recognizes itself.
   readonly dictationTerms: readonly DictationTerm[] | undefined
