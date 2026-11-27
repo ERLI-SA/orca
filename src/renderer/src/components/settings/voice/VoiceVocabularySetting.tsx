@@ -1,13 +1,16 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
 import { Plus, X } from 'lucide-react'
-import type { VoiceSettings } from '../../../../../shared/speech-types'
+import type { VoiceSettings } from '../../../../../shared/speech/speech-types'
 import {
   MAX_DICTATION_TERMS,
   MAX_DICTATION_TERM_LENGTH,
   type DictationTerm
-} from '../../../../../shared/dictation-dictionary'
-import { getRepoExecutionHostId, type ExecutionHostId } from '../../../../../shared/execution-host'
+} from '../../../../../shared/speech/dictation/dictation-dictionary'
+import {
+  getRepoExecutionHostId,
+  type ExecutionHostId
+} from '../../../../../shared/execution-host/execution-host'
 import { useAppStore } from '@/store'
 import { selectRepoByIdForActiveWorkspace } from '@/store/repos/active-workspace-repository'
 import { useTranslate } from '@/i18n/use-translate'
@@ -15,8 +18,7 @@ import { Button } from '../../ui/button'
 import { Input } from '../../ui/input'
 import {
   SettingsSegmentedControl,
-  SettingsSubsectionHeader,
-  SettingsSwitchRow
+  SettingsSubsectionHeader
 } from '../form-controls/SettingsFormControls'
 
 type VocabularyScope = 'personal' | 'repo'
@@ -143,22 +145,6 @@ export function VoiceVocabularySetting({
             saveTerms([...terms, entry])
           }
         }}
-      />
-      <SettingsSwitchRow
-        label={t(
-          'components.settings.voice.vocabulary.repoNameHint',
-          'Use the repo name as a hint'
-        )}
-        description={t(
-          'components.settings.voice.vocabulary.repoNameHintDescription',
-          "Helps recognize the repo's name."
-        )}
-        checked={voiceSettings.dictationRepoNameHint !== false}
-        onChange={() =>
-          onUpdateVoiceSettings({
-            dictationRepoNameHint: voiceSettings.dictationRepoNameHint === false
-          })
-        }
       />
     </div>
   )

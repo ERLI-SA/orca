@@ -1,14 +1,14 @@
 import { GENERAL_SETTING_ANCHORS } from './general-setting-anchors'
 import { getGeneralSubPageTitle, type GeneralSubPage } from './general-sub-pages'
 import type React from 'react'
-import type { GlobalSettings } from '../../../../../shared/global-settings-types'
+import type { GlobalSettings } from '../../../../../shared/settings/global-settings-types'
 import { OpenInMenuEditor, type useOpenInMenuDraft } from './OpenInMenuSetting'
 import { SearchableSetting } from '../section-layout/SearchableSetting'
 import { SettingsSwitchRow } from '../form-controls/SettingsFormControls'
 import { WorkspaceDirectorySetting } from './WorkspaceDirectorySetting'
 import { useTranslate } from '@/i18n/use-translate'
 import { GlobalWorktreeVisibilitySourcesSetting } from './GlobalWorktreeVisibilitySourcesSetting'
-import { GLOBAL_WORKTREE_VISIBILITY_SETTINGS_TARGET_ID } from '@/lib/settings-navigation-types'
+import { GLOBAL_WORKTREE_VISIBILITY_SETTINGS_TARGET_ID } from '@/components/settings/navigation/settings-navigation-types'
 import { SettingsGroup } from '../section-layout/SettingsGroup'
 
 type GeneralWorkspaceSettingsSectionProps = {

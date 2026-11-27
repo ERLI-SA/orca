@@ -1,9 +1,15 @@
+import { assertCapabilityEnabled } from '../../../shared/disabled-capabilities'
+
 /** GETs a public JSON file with a byte cap and timeout; no cookies, no query, no identifiers. */
 export async function fetchBoundedJson(
   fetcher: typeof fetch,
   url: string,
   { label, maxBytes, timeoutMs }: { label: string; maxBytes: number; timeoutMs: number }
 ): Promise<unknown> {
+  // Why gated here: upstream defaults the plugin system on, and this is the one place the
+  // kill list and install stats reach orca.dev. Callers already treat a failed fetch as
+  // "no update", so a build without plugins keeps working on what it has cached.
+  assertCapabilityEnabled('plugins')
   const response = await fetcher(url, {
     cache: 'no-store',
     credentials: 'omit',

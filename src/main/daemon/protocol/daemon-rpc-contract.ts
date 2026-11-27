@@ -21,7 +21,7 @@ import type { PtyStartupIngressIntent } from '../../../shared/terminal/pty/ingre
 import type {
   AgentSessionExecutionClaim,
   AgentSessionSurfaceBinding
-} from '../../../shared/agent-session/agent-session-host-authority'
+} from '../../../shared/agent-session/lifecycle/operations/agent-session-host-authority'
 import type * as HistorySeedProtocol from '../history/seed-transfer/terminal-history-seed-transfer-protocol'
 import type * as PtyOwnerQueryProtocol from './daemon-pty-owner-query-protocol'
 import type { TerminalSnapshot } from './terminal-snapshot'
@@ -175,7 +175,7 @@ export type TerminalBufferActionRequest = {
   }
 }
 
-// Viewers live above the daemon on orcad; an older daemon rejects this, which callers ignore.
+// Viewers live above the daemon on orcad; gated by focusLossReportSupport (v56, some v55).
 export type ReportFocusLostRequest = {
   id: string
   type: 'reportFocusLost'

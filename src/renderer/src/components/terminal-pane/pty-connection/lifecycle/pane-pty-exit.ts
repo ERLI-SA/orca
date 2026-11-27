@@ -1,3 +1,7 @@
+import {
+  getTerminalNoticeLifetime,
+  retireTerminalNoticeLifetime
+} from '../../provider-notices/terminal-notice-lifetime'
 import { scheduleRuntimeGraphSync } from '@/runtime/sync-runtime-graph/graph-sync-scheduler'
 import { useAppStore } from '@/store'
 import {
@@ -14,7 +18,7 @@ import { isPtyExitReplacedByRestart } from '../../pty-transport/delivery/pty-exi
 import { armRestartReplacement } from '../spawn/restart-replacement-on-show'
 import { noteHiddenAgentResumePtyEnded } from '../spawn/hidden-agent-resume-deferral'
 import { expectExitedSplitPaneClose } from './exited-split-pane-close'
-import { ORCA_LAYOUT_OWNER_IS_MAIN } from '../../../../../../shared/layout-owner-switch'
+import { ORCA_LAYOUT_OWNER_IS_MAIN } from '../../../../../../shared/workspace-layout/layout-owner-switch'
 
 export function initializePanePtyExit(session: ConnectPanePtySession): void {
   session.focusSurvivingPtyPaneAfterKeptExit = (): void => {
@@ -55,14 +59,14 @@ export function initializePanePtyExit(session: ConnectPanePtySession): void {
 function keepsUntouchedFreshPane(
   session: ConnectPanePtySession,
   ptyId: string,
-  inputAttempted: boolean
+  inputAttempted: () => boolean
 ): boolean {
   // Why the attempt as well as the ack: a write still awaiting acknowledgement when the
   // shell exits (Ctrl+C racing its ack) was typed by the user; retaining that dead pane
   // strands it. ERLI fork: fix(terminal): tear down failed local exits after input.
   return (
     session.spawnedFreshPtyId === ptyId &&
-    !inputAttempted &&
+    !inputAttempted() &&
     !Number.isFinite(session.lastTerminalInputAt)
   )
 }
@@ -92,9 +96,12 @@ export function bindPanePtyExit(session: ConnectPanePtySession): void {
     const preserveRendererBinding =
       opts.preserveRendererBinding === true ||
       consumeCommittedPtyShutdownExit(ptyId, session.runtimeEnvironmentId)
-    session.resetRendererOrderedSeqForPtyExit(ptyId)
     const currentPaneTransport = session.deps.paneTransportsRef.current.get(session.pane.id)
-    if (currentPaneTransport && currentPaneTransport !== session.transport) {
+    const currentPtyId = session.transport.getPtyId()
+    if (
+      (currentPaneTransport && currentPaneTransport !== session.transport) ||
+      (currentPtyId !== null && currentPtyId !== ptyId)
+    ) {
       // Late exits from replaced transports may clear only the exiting PTY’s ownership.
       session.handledExitPtyId = ptyId
       session.processExitStateByPtyId.delete(ptyId)
@@ -105,6 +112,7 @@ export function bindPanePtyExit(session: ConnectPanePtySession): void {
       scheduleRuntimeGraphSync()
       return
     }
+    session.resetRendererOrderedSeqForPtyExit(ptyId)
     session.handledExitPtyId = ptyId
     noteHiddenAgentResumePtyEnded(session)
     const processExitState =
@@ -121,6 +129,8 @@ export function bindPanePtyExit(session: ConnectPanePtySession): void {
     }
     const isSuppressedExit =
       session.deps.consumeSuppressedPtyExit(ptyId) || preserveRendererBinding || replacedByRestart
+    const endedNotice =
+      !isSuppressedExit && !isUnverifiedExit ? getTerminalNoticeLifetime(ptyId) : undefined
     if (!isSuppressedExit && !isUnverifiedExit) {
       session.clearExitedPanePtyLayoutBinding(ptyId)
     }
@@ -128,9 +138,12 @@ export function bindPanePtyExit(session: ConnectPanePtySession): void {
     if (!preserveRendererBinding && !isUnverifiedExit) {
       session.deps.clearTabPtyId(session.deps.tabId, ptyId)
     }
+    if (endedNotice) {
+      retireTerminalNoticeLifetime(endedNotice)
+    }
     // Abrupt exits may omit title reset; always clear the cache countdown.
     session.deps.setCacheTimerStartedAt(session.cacheKey, null)
-    useAppStore.getState().removeAgentStatus(session.cacheKey)
+    useAppStore.getState().retireAgentStatusProcess(session.cacheKey, ptyId)
     useAppStore.getState().clearPaneForegroundAgent(session.cacheKey)
     // Republish PTY loss to the runtime graph immediately; CLI bindings cannot wait for an unrelated layout change.
     scheduleRuntimeGraphSync()
@@ -193,7 +206,7 @@ export function bindPanePtyExit(session: ConnectPanePtySession): void {
     const panes = session.manager.getPanes()
     if (panes.length <= 1) {
       // Keep sole fresh, never-typed shell failures visible for diagnostics instead of closing the tab and deactivating the workspace; explicit exit and dead reattach still close.
-      if (keepsUntouchedFreshPane(session, ptyId, processExitState.inputAttempt.attempted)) {
+      if (keepsUntouchedFreshPane(session, ptyId, () => processExitState.inputAttempt.attempted)) {
         return
       }
       session.deps.onPtyExitRef.current(ptyId, exitCode)

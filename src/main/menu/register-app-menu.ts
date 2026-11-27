@@ -1,16 +1,14 @@
 import { BrowserWindow, Menu, app } from 'electron'
-import {
-  formatKeybindingList,
-  getEffectiveKeybindingsForAction,
-  type KeybindingActionId,
-  type KeybindingOverrides
-} from '../../shared/keybindings'
-import type { UpdateCheckOptions } from '../../shared/update-status-types'
+import { formatKeybindingList } from '../../shared/keybindings/formatting'
+import { getEffectiveKeybindingsForAction } from '../../shared/keybindings/effective'
+import type { KeybindingActionId, KeybindingOverrides } from '../../shared/keybindings/types'
+import type { UpdateCheckOptions } from '../../shared/updater/update-status-types'
 import { ifCapabilityEnabled } from '../../shared/disabled-capabilities'
 import { translateMain } from '../i18n/main-i18n'
 import { createAppMenuSelectionItem, resolveNativeEditTarget } from './app-menu-selection-item'
 import { createAppMenuQuitItems, type AppMenuQuitHandlers } from './app-menu-quit-item'
 import { createAppMenuReloadAndDevToolsItems } from './app-menu-reload-devtools-items'
+import { labeledAppMenuRole } from './labeled-app-menu-role'
 import { createAppWindowMenu } from './app-menu-window'
 
 export type AppearanceMenuState = {
@@ -130,15 +128,15 @@ function buildAndApplyMenu(options: RegisterAppMenuOptions): void {
   const macAppMenu: Electron.MenuItemConstructorOptions = {
     label: options.appMenuLabel ?? app.name,
     submenu: [
-      { role: 'about' },
+      labeledAppMenuRole('about', 'menu.about', 'About Orca'),
       checkForUpdatesItem,
       settingsItem,
       { type: 'separator' },
-      { role: 'services' },
+      labeledAppMenuRole('services', 'menu.services', 'Services'),
       { type: 'separator' },
-      { role: 'hide' },
-      { role: 'hideOthers' },
-      { role: 'unhide' },
+      labeledAppMenuRole('hide', 'menu.hide', 'Hide Orca'),
+      labeledAppMenuRole('hideOthers', 'menu.hideOthers', 'Hide Others'),
+      labeledAppMenuRole('unhide', 'menu.unhide', 'Show All'),
       { type: 'separator' },
       ...createAppMenuQuitItems(options, options.appMenuLabel ?? app.name)
     ]
@@ -156,10 +154,10 @@ function buildAndApplyMenu(options: RegisterAppMenuOptions): void {
   const editMenu: Electron.MenuItemConstructorOptions = {
     label: translateMain('menu.edit', 'Edit'),
     submenu: [
-      { role: 'undo', ...undoRedoOptions },
-      { role: 'redo', ...undoRedoOptions },
+      { role: 'undo', label: translateMain('menu.undo', 'Undo'), ...undoRedoOptions },
+      { role: 'redo', label: translateMain('menu.redo', 'Redo'), ...undoRedoOptions },
       { type: 'separator' },
-      { role: 'cut' },
+      labeledAppMenuRole('cut', 'menu.cut', 'Cut'),
       createAppMenuSelectionItem({
         action: 'copy',
         label: translateMain('menu.copy', 'Copy'),
@@ -269,7 +267,7 @@ function buildAndApplyMenu(options: RegisterAppMenuOptions): void {
         label: `${translateMain('menu.openWorktreePalette', 'Open Worktree Palette')}\t${shortcutLabel('worktree.palette')}`
       },
       { type: 'separator' },
-      { role: 'togglefullscreen' },
+      labeledAppMenuRole('togglefullscreen', 'menu.toggleFullScreen', 'Toggle Full Screen'),
       { type: 'separator' },
       appearanceSubmenu
     ]
@@ -290,7 +288,7 @@ function buildAndApplyMenu(options: RegisterAppMenuOptions): void {
         ? []
         : ([
             { type: 'separator' },
-            { role: 'about' },
+            labeledAppMenuRole('about', 'menu.about', 'About Orca'),
             checkForUpdatesItem
           ] satisfies Electron.MenuItemConstructorOptions[]))
     ]
