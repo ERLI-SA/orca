@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { PluginMarketplaceRegisteredSource } from './plugin-marketplace-store'
 
 // Why this test exists: upstream defaults the plugin system on and, at launch, fetches
 // the kill list and install stats from orca.dev and clones the official marketplace.
@@ -22,28 +23,29 @@ describe('plugins capability: launch-time network', () => {
 
   it('never calls the fetcher when plugins are compiled out', async () => {
     const m = await load('plugins')
-    const fetcher = vi.fn()
-    await expect(
-      m.fetchBoundedJson(fetcher as unknown as typeof fetch, 'https://orca.dev/x', options)
-    ).rejects.toThrow('not available')
+    const fetcher = vi.fn<typeof fetch>()
+    await expect(m.fetchBoundedJson(fetcher, 'https://orca.dev/x', options)).rejects.toThrow(
+      'not available'
+    )
     expect(fetcher).not.toHaveBeenCalled()
   })
 
   it('does not clone a marketplace when plugins are compiled out', async () => {
     const m = await load('plugins')
-    await expect(
-      m.fetchPluginMarketplace({
-        source: { url: 'https://github.com/example/marketplace.git' }
-      } as Parameters<typeof m.fetchPluginMarketplace>[0])
-    ).rejects.toThrow('not available')
+    const source: PluginMarketplaceRegisteredSource = {
+      id: 'example',
+      source: { kind: 'git', url: 'https://github.com/example/marketplace.git', ref: 'main' },
+      addedAt: 0
+    }
+    await expect(m.fetchPluginMarketplace(source)).rejects.toThrow('not available')
   })
 
   it('still fetches when plugins ship', async () => {
     const m = await load('')
-    const fetcher = vi.fn(async () => new Response('{"ok":true}'))
-    await expect(
-      m.fetchBoundedJson(fetcher as unknown as typeof fetch, 'https://orca.dev/x', options)
-    ).resolves.toEqual({ ok: true })
+    const fetcher = vi.fn<typeof fetch>(async () => new Response('{"ok":true}'))
+    await expect(m.fetchBoundedJson(fetcher, 'https://orca.dev/x', options)).resolves.toEqual({
+      ok: true
+    })
     expect(fetcher).toHaveBeenCalledOnce()
   })
 })
